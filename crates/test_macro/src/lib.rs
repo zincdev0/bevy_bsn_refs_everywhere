@@ -527,18 +527,6 @@ impl ToTokens for ExprSuffixCast {
 }
 
 #[derive(Debug)]
-pub(crate) struct ExprSuffixIndex {
-    pub(crate) index: Box<Expr>,
-}
-
-impl ToTokens for ExprSuffixIndex {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let ExprSuffixIndex { index } = self;
-        quote! { [#index] }.to_tokens(tokens);
-    }
-}
-
-#[derive(Debug)]
 pub(crate) enum ExprSuffixDot {
     Await,
     Field(ExprSuffixDotField),
@@ -547,7 +535,16 @@ pub(crate) enum ExprSuffixDot {
 
 impl Parse for ExprSuffixDot {
     fn parse(input: ParseStream) -> Result<Self> {
-        todo!();
+        input.parse::<Token![.]>()?;
+        if input.parse::<Token![await]>().is_ok() {
+            Ok(ExprSuffixDot::Await)
+        } else if let Ok(method_call) = input.parse() {
+            Ok(ExprSuffixDot::MethodCall(method_call))
+        } else if let Ok(field) = input.parse() {
+            Ok(ExprSuffixDot::Field(field))
+        } else {
+            Err(input.error("TODO: error strings"))
+        }
     }
 }
 
@@ -562,7 +559,6 @@ impl ToTokens for ExprSuffixDot {
     }
 }
 
-// Can't use syn::Member or syn::Index, they doesn't implement Debug.
 #[derive(Debug)]
 pub(crate) enum ExprSuffixDotField {
     Named(Ident),
@@ -705,6 +701,18 @@ impl ToTokens for ExprSuffixDotMethodCall {
 }
 
 #[derive(Debug)]
+pub(crate) struct ExprSuffixIndex {
+    pub(crate) index: Box<Expr>,
+}
+
+impl ToTokens for ExprSuffixIndex {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let ExprSuffixIndex { index } = self;
+        quote! { [#index] }.to_tokens(tokens);
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct Stmt {}
 
 impl ToTokens for Stmt {
@@ -763,19 +771,21 @@ mod tests {
     }
 
     #[test]
-    fn print_index() {
-        assert_to_tokens(
-            ExprSuffixIndex {
-                index: expr(ExprBase::Lit(quote! { 0123 })),
-            },
-            "[0123]",
-        );
-        assert_to_tokens(
-            ExprSuffixIndex {
-                index: expr(ExprBase::Lit(quote! { "foo" })),
-            },
-            "[\"foo\"]",
-        );
+    fn parse_dot() {
+        let Ok(ExprSuffixDot::Await) = syn::parse_str(".await") else {
+            panic!();
+        };
+        let Ok(ExprSuffixDot::Field(field)) = syn::parse_str(".ident") else {
+            panic!();
+        };
+        let Ok(ExprSuffixDot::MethodCall(method_call)) = syn::parse_str(".call()") else {
+            panic!();
+        };
+
+        _ = syn::parse_str::<ExprSuffixDot>("await").unwrap_err();
+        _ = syn::parse_str::<ExprSuffixDot>(".await()").unwrap_err();
+        _ = syn::parse_str::<ExprSuffixDot>(".ident::<>").unwrap_err();
+        _ = syn::parse_str::<ExprSuffixDot>(".await::<>()").unwrap_err();
     }
 
     #[test]
@@ -818,7 +828,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_field() {
+    fn parse_dot_field() {
         let Ok(ExprSuffixDotField::Named(ident)) = syn::parse_str("ident") else {
             panic!();
         };
@@ -836,13 +846,13 @@ mod tests {
     }
 
     #[test]
-    fn print_field() {
+    fn print_dot_field() {
         assert_to_tokens(ExprSuffixDotField::Named(format_ident!("ident")), "ident");
         assert_to_tokens(ExprSuffixDotField::Unnamed(0123), "123");
     }
 
     #[test]
-    fn parse_method_call() {
+    fn parse_dot_method_call() {
         let method_call = syn::parse_str::<ExprSuffixDotMethodCall>("ident()").unwrap();
         assert_eq!(method_call.ident, "ident");
         assert!(method_call.turbofish.is_none());
@@ -878,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    fn print_method_call() {
+    fn print_dot_method_call() {
         assert_to_tokens(
             ExprSuffixDotMethodCall {
                 ident: format_ident!("ident"),
@@ -895,6 +905,22 @@ mod tests {
                 args: vec![],
             },
             "ident::<Type>()",
+        );
+    }
+
+    #[test]
+    fn print_index() {
+        assert_to_tokens(
+            ExprSuffixIndex {
+                index: expr(ExprBase::Lit(quote! { 0123 })),
+            },
+            "[0123]",
+        );
+        assert_to_tokens(
+            ExprSuffixIndex {
+                index: expr(ExprBase::Lit(quote! { "foo" })),
+            },
+            "[\"foo\"]",
         );
     }
 }
