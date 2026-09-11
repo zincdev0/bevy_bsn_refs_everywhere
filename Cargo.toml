@@ -1,0 +1,11 @@
+[workspace]
+resolver = "3"
+members = ["crates/test_macro"]
+
+[package]
+name = "test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+test_macro = { path = "crates/test_macro" }
