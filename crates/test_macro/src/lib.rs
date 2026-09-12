@@ -176,12 +176,12 @@ impl Parse for Expr {
             loop {
                 if let Some((punct_1, next_cursor)) = cursor.punct()
                     && punct_1.as_char() == '#'
-                    && let Spacing::Joint = punct_1.spacing()
                 {
                     cursor = next_cursor;
                 } else {
                     break Ok((attrs, cursor));
                 }
+
                 let is_inner = if let Some((punct_2, next_cursor)) = cursor.punct()
                     && punct_2.as_char() == '!'
                 {
@@ -190,14 +190,14 @@ impl Parse for Expr {
                 } else {
                     false
                 };
+
                 let Some((inner_cursor, _, next_cursor)) = cursor.group(Delimiter::Bracket) else {
                     break Ok((attrs, cursor));
                 };
-                quote! { # }.to_tokens(&mut attrs);
-                if is_inner {
-                    quote! { ! }.to_tokens(&mut attrs);
-                }
-                inner_cursor.token_stream().to_tokens(&mut attrs);
+
+                let is_inner = is_inner.then(|| quote! { ! });
+                let inner_cursor = inner_cursor.token_stream();
+                quote! { # #is_inner [#inner_cursor] }.to_tokens(&mut attrs);
                 cursor = next_cursor;
             }
         })?;
@@ -318,9 +318,7 @@ pub(crate) enum ExprPrefix {
 impl Parse for ExprPrefix {
     fn parse(input: ParseStream) -> Result<Self> {
         input.step(|step_cursor| {
-            let (punct, cursor) = if let Some((punct, cursor)) = step_cursor.punct()
-                && let Spacing::Alone = punct.spacing()
-            {
+            let (punct, cursor) = if let Some((punct, cursor)) = step_cursor.punct() {
                 (punct, cursor)
             } else {
                 return Err(step_cursor.error("TODO: error strings"));
@@ -765,7 +763,6 @@ impl Parse for ExprSuffixDotMethodCall {
                 && let Some((punct_3, mut cursor)) = cursor.punct()
                 && punct_3.as_char() == '<'
             {
-                println!("matched");
                 let mut turbofish = TokenStream::new();
                 let mut scope = 0;
                 loop {
@@ -963,6 +960,88 @@ mod tests {
         assert_to_tokens(BlockKind::Loop, "loop");
         assert_to_tokens(BlockKind::Try, "try");
         assert_to_tokens(BlockKind::Unsafe, "unsafe");
+    }
+
+    #[test]
+    fn expr_parse() {
+        let expr = parse_str::<Expr>("0123").unwrap();
+        assert!(expr.attrs.is_empty());
+        assert!(expr.prefixes.is_empty());
+        assert!(matches!(expr.base, ExprBase::Lit(_)));
+        assert!(expr.suffixes.is_empty());
+
+        let expr = parse_str::<Expr>("#[meta] 0123").unwrap();
+        assert_token_stream(expr.attrs, quote! { #[meta] });
+        assert!(expr.prefixes.is_empty());
+        assert!(matches!(expr.base, ExprBase::Lit(_)));
+        assert!(expr.suffixes.is_empty());
+
+        let expr = parse_str::<Expr>("#[meta(foo = [0123])] 0123").unwrap();
+        assert_token_stream(expr.attrs, quote! { #[meta(foo = [0123])] });
+
+        let expr = parse_str::<Expr>("#[meta] #[meta_foo] 0123").unwrap();
+        assert_token_stream(expr.attrs, quote! { #[meta] #[meta_foo] });
+
+        let expr = parse_str::<Expr>("#![meta] 0123").unwrap();
+        assert_token_stream(expr.attrs, quote! { #![meta] });
+
+        let expr = parse_str::<Expr>("!0123").unwrap();
+        assert_eq!(expr.prefixes.len(), 1);
+        assert!(matches!(expr.prefixes[0], ExprPrefix::Not));
+
+        let expr = parse_str::<Expr>("!!!0123").unwrap();
+        assert_eq!(expr.prefixes.len(), 3);
+        assert!(matches!(expr.prefixes[0], ExprPrefix::Not));
+        assert!(matches!(expr.prefixes[1], ExprPrefix::Not));
+        assert!(matches!(expr.prefixes[2], ExprPrefix::Not));
+
+        let expr = parse_str::<Expr>("0123?").unwrap();
+        assert_eq!(expr.suffixes.len(), 1);
+        assert!(matches!(expr.suffixes[0], ExprSuffix::Try));
+
+        let expr = parse_str::<Expr>("0123???").unwrap();
+        assert_eq!(expr.suffixes.len(), 3);
+        assert!(matches!(expr.suffixes[0], ExprSuffix::Try));
+        assert!(matches!(expr.suffixes[1], ExprSuffix::Try));
+        assert!(matches!(expr.suffixes[2], ExprSuffix::Try));
+
+        let expr = parse_str::<Expr>("#[meta] #[meta] !!!0123???").unwrap();
+        assert_token_stream(expr.attrs, quote! { #[meta] #[meta] });
+        assert_eq!(expr.prefixes.len(), 3);
+        assert!(matches!(expr.prefixes[0], ExprPrefix::Not));
+        assert!(matches!(expr.prefixes[1], ExprPrefix::Not));
+        assert!(matches!(expr.prefixes[2], ExprPrefix::Not));
+        assert!(matches!(expr.base, ExprBase::Lit(_)));
+        assert_eq!(expr.suffixes.len(), 3);
+        assert!(matches!(expr.suffixes[0], ExprSuffix::Try));
+        assert!(matches!(expr.suffixes[1], ExprSuffix::Try));
+        assert!(matches!(expr.suffixes[2], ExprSuffix::Try));
+    }
+
+    #[test]
+    fn expr_print() {
+        assert_to_tokens(
+            Expr {
+                attrs: quote! { #![meta] #[meta] },
+                prefixes: vec![ExprPrefix::Not, ExprPrefix::Neg],
+                base: ExprBase::Lit(quote! { 0123 }),
+                suffixes: vec![
+                    ExprSuffix::Try,
+                    ExprSuffix::Binary(ExprSuffixBinary {
+                        kind: ExprSuffixBinaryKind::Add,
+                        expr: Box::new(expr(ExprBase::Lit(quote! { "foo" }))),
+                    }),
+                ],
+            },
+            "#![meta] #[meta] !-0123? + \"foo\"",
+        );
+    }
+
+    #[test]
+    fn expr_respect() {
+        assert_respect::<Expr>(quote! { #[meta] });
+        assert_respect::<Expr>(quote! { #[meta] * });
+        assert_respect::<Expr>(quote! { #[meta] *&raw & });
     }
 
     #[test]
