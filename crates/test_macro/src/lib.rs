@@ -863,7 +863,16 @@ mod tests {
     }
 
     #[test]
-    fn parse_block_kind() {}
+    fn parse_block_kind() {
+        assert!(matches!(parse_str("async").unwrap(), BlockKind::Async));
+        assert!(matches!(parse_str("const").unwrap(), BlockKind::Const));
+        assert!(matches!(parse_str("").unwrap(), BlockKind::Default));
+        assert!(matches!(parse_str("loop").unwrap(), BlockKind::Loop));
+        assert!(matches!(parse_str("try").unwrap(), BlockKind::Try));
+        assert!(matches!(parse_str("unsafe").unwrap(), BlockKind::Unsafe));
+
+        _ = parse_str::<BlockKind>("foo").unwrap_err();
+    }
 
     #[test]
     fn print_block_kind() {
@@ -884,6 +893,8 @@ mod tests {
         let binary = parse_str::<ExprSuffixBinary>("<<= \"foo\"").unwrap();
         assert!(matches!(binary.kind, ExprSuffixBinaryKind::ShlAssign));
         assert!(matches!(binary.expr.base, ExprBase::Lit(_)));
+
+        _ = parse_str::<ExprSuffixBinary>("<Type>").unwrap_err();
     }
 
     #[test]
