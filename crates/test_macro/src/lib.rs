@@ -100,8 +100,8 @@ impl Parse for Closure {
                         cursor = next_cursor;
                         break;
                     }
-                    Some((tt, next_cursor)) => {
-                        pats.extend(std::iter::once(tt));
+                    Some((token_tree, next_cursor)) => {
+                        pats.extend(std::iter::once(token_tree));
                         cursor = next_cursor;
                     }
                     None => return Err(step_cursor.error("TODO: error string")),
@@ -519,6 +519,26 @@ pub(crate) struct ExprSuffixCast {
     pub(crate) ty: TokenStream,
 }
 
+impl Parse for ExprSuffixCast {
+    fn parse(input: ParseStream) -> Result<Self> {
+        // using `syn::Type` to fully parse the type instead of taking shortcuts, because I don't think casts would be
+        // extremely common and types without surrounding `<>` are very complex to skip.
+        //
+        // if this needs to be changed later, things to look out for are:
+        // - `module::T`
+        // - `::module::T`
+        // - `<T as U>::Assoc`
+        // - `&T`
+        // - `&'a T`
+        // - `dyn T`
+        _ = input.parse::<Token![as]>()?;
+        let ty_parsed = input.parse::<syn::Type>()?;
+        let mut ty = TokenStream::new();
+        ty_parsed.to_tokens(&mut ty);
+        Ok(ExprSuffixCast { ty })
+    }
+}
+
 impl ToTokens for ExprSuffixCast {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let ExprSuffixCast { ty } = self;
@@ -535,7 +555,7 @@ pub(crate) enum ExprSuffixDot {
 
 impl Parse for ExprSuffixDot {
     fn parse(input: ParseStream) -> Result<Self> {
-        input.parse::<Token![.]>()?;
+        _ = input.parse::<Token![.]>()?;
         if input.parse::<Token![await]>().is_ok() {
             Ok(ExprSuffixDot::Await)
         } else if let Ok(method_call) = input.parse() {
@@ -619,8 +639,8 @@ impl Parse for ExprSuffixDotMethodCall {
                 let mut turbofish = TokenStream::new();
                 let mut scope = 0;
                 loop {
-                    let tt = cursor.token_tree();
-                    let (tt, next_cursor) = match tt {
+                    let token_tree = cursor.token_tree();
+                    let (token_tree, next_cursor) = match token_tree {
                         Some((TokenTree::Punct(punct), next_cursor)) if punct.as_char() == '<' => {
                             scope += 1;
                             (TokenTree::Punct(punct), next_cursor)
@@ -634,12 +654,12 @@ impl Parse for ExprSuffixDotMethodCall {
                         Some((TokenTree::Punct(punct), cursor)) if punct.as_char() == '>' => {
                             break (Some(turbofish), cursor);
                         }
-                        Some((tt, next_cursor)) => (tt, next_cursor),
+                        Some((token_tree, next_cursor)) => (token_tree, next_cursor),
                         None => {
                             return Err(step_cursor.error("TODO: error strings"));
                         }
                     };
-                    turbofish.extend(std::iter::once(tt));
+                    turbofish.extend(std::iter::once(token_tree));
                     cursor = next_cursor;
                 }
             } else {
@@ -661,9 +681,9 @@ impl Parse for ExprSuffixDotMethodCall {
                     cursor,
                 ));
             };
-            while let Some((tt, next_inner_cursor)) = inner_cursor.token_tree() {
+            while let Some((token_tree, next_inner_cursor)) = inner_cursor.token_tree() {
                 args.extend(std::iter::once(last_token_tree));
-                last_token_tree = tt;
+                last_token_tree = token_tree;
                 inner_cursor = next_inner_cursor;
             }
             let args = Punctuated::<Expr, Token![,]>::parse_terminated
@@ -727,7 +747,8 @@ mod tests {
     use quote::{ToTokens, format_ident, quote};
 
     use crate::{
-        Expr, ExprBase, ExprSuffixDot, ExprSuffixDotField, ExprSuffixDotMethodCall, ExprSuffixIndex,
+        Expr, ExprBase, ExprSuffixCast, ExprSuffixDot, ExprSuffixDotField, ExprSuffixDotMethodCall,
+        ExprSuffixIndex,
     };
 
     #[track_caller]
@@ -768,6 +789,52 @@ mod tests {
             base,
             suffixes: vec![],
         })
+    }
+
+    #[test]
+    fn parse_cast() {
+        let cast = syn::parse_str::<ExprSuffixCast>("as Type").unwrap();
+        assert_token_stream(cast.ty, quote! { Type });
+
+        let cast = syn::parse_str::<ExprSuffixCast>("as module::Type").unwrap();
+        assert_token_stream(cast.ty, quote! { module::Type });
+
+        let cast = syn::parse_str::<ExprSuffixCast>("as ::module::Type").unwrap();
+        assert_token_stream(cast.ty, quote! { ::module::Type });
+
+        let cast = syn::parse_str::<ExprSuffixCast>("as ::module::Type<T>").unwrap();
+        assert_token_stream(cast.ty, quote! { ::module::Type<T> });
+
+        let cast = syn::parse_str::<ExprSuffixCast>("as ::module::Type::<T>").unwrap();
+        assert_token_stream(cast.ty, quote! { ::module::Type::<T> });
+
+        let cast = syn::parse_str::<ExprSuffixCast>("as <Type as Trait>::Assoc").unwrap();
+        assert_token_stream(cast.ty, quote! { <Type as Trait>::Assoc });
+
+        let cast = syn::parse_str::<ExprSuffixCast>("as &T").unwrap();
+        assert_token_stream(cast.ty, quote! { &T });
+
+        let cast = syn::parse_str::<ExprSuffixCast>("as &'a T").unwrap();
+        assert_token_stream(cast.ty, quote! { &'a T });
+
+        let cast = syn::parse_str::<ExprSuffixCast>("as dyn T").unwrap();
+        assert_token_stream(cast.ty, quote! { dyn T });
+    }
+
+    #[test]
+    fn print_cast() {
+        assert_to_tokens(
+            ExprSuffixCast {
+                ty: quote! { Type },
+            },
+            "as Type",
+        );
+        assert_to_tokens(
+            ExprSuffixCast {
+                ty: quote! { <Type as Trait>::Assoc },
+            },
+            "as <Type as Trait>::Assoc",
+        );
     }
 
     #[test]
