@@ -1,7 +1,7 @@
 use proc_macro2::{Delimiter, Ident, Literal, Spacing, TokenStream, TokenTree};
 use quote::{ToTokens, quote};
 use syn::{
-    Lit, Result, Token,
+    Lit, Result, Token, parenthesized,
     parse::{Parse, ParseStream, Parser, discouraged::Speculative},
     parse_macro_input,
     punctuated::Punctuated,
@@ -322,6 +322,17 @@ pub(crate) enum ExprSuffix {
     Try,
 }
 
+// impl Parse for ExprSuffix {
+//     fn parse(input: ParseStream) -> Result<Self> {
+//         if let fork = input.fork()
+//             && let Ok(binary) = fork.parse()
+//         {
+//             Ok(ExprSuffix::Binary(binary))
+//         } else if let fork = input.fork()
+//             && let Ok()
+//     }
+// }
+
 impl ToTokens for ExprSuffix {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
@@ -532,6 +543,19 @@ impl ToTokens for ExprSuffixBinaryKind {
 #[derive(Debug)]
 pub(crate) struct ExprSuffixCall {
     pub(crate) args: Vec<Expr>,
+}
+
+impl Parse for ExprSuffixCall {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let fork = input.fork();
+        let content;
+        parenthesized!(content in fork);
+        let args = Punctuated::<Expr, Token![,]>::parse_terminated(&content)?
+            .into_iter()
+            .collect();
+        input.advance_to(&fork);
+        Ok(ExprSuffixCall { args })
+    }
 }
 
 impl ToTokens for ExprSuffixCall {
@@ -775,8 +799,8 @@ mod tests {
     use syn::parse_str;
 
     use crate::{
-        Expr, ExprBase, ExprSuffixBinary, ExprSuffixBinaryKind, ExprSuffixCast, ExprSuffixDot,
-        ExprSuffixDotField, ExprSuffixDotMethodCall, ExprSuffixIndex,
+        Expr, ExprBase, ExprSuffixBinary, ExprSuffixBinaryKind, ExprSuffixCall, ExprSuffixCast,
+        ExprSuffixDot, ExprSuffixDotField, ExprSuffixDotMethodCall, ExprSuffixIndex,
     };
 
     #[track_caller]
@@ -810,13 +834,13 @@ mod tests {
         assert_token_stream(quote! { #lhs }, parse_str(rhs).unwrap());
     }
 
-    fn expr(base: ExprBase) -> Box<Expr> {
-        Box::new(Expr {
+    fn expr(base: ExprBase) -> Expr {
+        Expr {
             attrs: TokenStream::new(),
             prefixes: vec![],
             base,
             suffixes: vec![],
-        })
+        }
     }
 
     #[test]
@@ -835,14 +859,14 @@ mod tests {
         assert_to_tokens(
             ExprSuffixBinary {
                 kind: ExprSuffixBinaryKind::Add,
-                expr: expr(ExprBase::Lit(quote! { 0123 })),
+                expr: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
             },
             "+ 0123",
         );
         assert_to_tokens(
             ExprSuffixBinary {
                 kind: ExprSuffixBinaryKind::ShlAssign,
-                expr: expr(ExprBase::Lit(quote! { "foo" })),
+                expr: Box::new(expr(ExprBase::Lit(quote! { "foo" }))),
             },
             "<<= \"foo\"",
         );
@@ -924,6 +948,40 @@ mod tests {
     }
 
     #[test]
+    fn parse_call() {
+        assert!(parse_str::<ExprSuffixCall>("()").unwrap().args.is_empty());
+
+        let call = parse_str::<ExprSuffixCall>("(0123)").unwrap();
+        assert_eq!(call.args.len(), 1);
+        assert!(matches!(call.args[0].base, ExprBase::Lit(_)));
+
+        let call = parse_str::<ExprSuffixCall>("(\"foo\", \"bar\",)").unwrap();
+        assert_eq!(call.args.len(), 2);
+        assert!(matches!(call.args[0].base, ExprBase::Lit(_)));
+        assert!(matches!(call.args[1].base, ExprBase::Lit(_)));
+    }
+
+    #[test]
+    fn print_call() {
+        assert_to_tokens(ExprSuffixCall { args: vec![] }, "()");
+        assert_to_tokens(
+            ExprSuffixCall {
+                args: vec![expr(ExprBase::Lit(quote! { 0123 }))],
+            },
+            "(0123)",
+        );
+        assert_to_tokens(
+            ExprSuffixCall {
+                args: vec![
+                    expr(ExprBase::Lit(quote! { "foo" })),
+                    expr(ExprBase::Lit(quote! { "bar" })),
+                ],
+            },
+            "(\"foo\", \"bar\")",
+        );
+    }
+
+    #[test]
     fn parse_cast() {
         let cast = parse_str::<ExprSuffixCast>("as Type").unwrap();
         assert_token_stream(cast.ty, quote! { Type });
@@ -951,6 +1009,10 @@ mod tests {
 
         let cast = parse_str::<ExprSuffixCast>("as dyn T").unwrap();
         assert_token_stream(cast.ty, quote! { dyn T });
+
+        _ = parse_str::<ExprSuffixCast>("Type").unwrap_err();
+        _ = parse_str::<ExprSuffixCast>("<Type>").unwrap_err();
+        _ = parse_str::<ExprSuffixCast>("as <Type as Trait>").unwrap_err();
     }
 
     #[test]
@@ -1111,13 +1173,13 @@ mod tests {
     fn print_index() {
         assert_to_tokens(
             ExprSuffixIndex {
-                index: expr(ExprBase::Lit(quote! { 0123 })),
+                index: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
             },
             "[0123]",
         );
         assert_to_tokens(
             ExprSuffixIndex {
-                index: expr(ExprBase::Lit(quote! { "foo" })),
+                index: Box::new(expr(ExprBase::Lit(quote! { "foo" }))),
             },
             "[\"foo\"]",
         );
