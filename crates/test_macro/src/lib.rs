@@ -36,6 +36,24 @@ pub(crate) enum BlockKind {
     Unsafe,
 }
 
+impl Parse for BlockKind {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if input.parse::<Token![async]>().is_ok() {
+            Ok(BlockKind::Async)
+        } else if input.parse::<Token![const]>().is_ok() {
+            Ok(BlockKind::Const)
+        } else if input.parse::<Token![loop]>().is_ok() {
+            Ok(BlockKind::Loop)
+        } else if input.parse::<Token![try]>().is_ok() {
+            Ok(BlockKind::Try)
+        } else if input.parse::<Token![unsafe]>().is_ok() {
+            Ok(BlockKind::Unsafe)
+        } else {
+            Ok(BlockKind::Default)
+        }
+    }
+}
+
 impl ToTokens for BlockKind {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
@@ -799,8 +817,9 @@ mod tests {
     use syn::parse_str;
 
     use crate::{
-        Expr, ExprBase, ExprSuffixBinary, ExprSuffixBinaryKind, ExprSuffixCall, ExprSuffixCast,
-        ExprSuffixDot, ExprSuffixDotField, ExprSuffixDotMethodCall, ExprSuffixIndex,
+        BlockKind, Expr, ExprBase, ExprSuffixBinary, ExprSuffixBinaryKind, ExprSuffixCall,
+        ExprSuffixCast, ExprSuffixDot, ExprSuffixDotField, ExprSuffixDotMethodCall,
+        ExprSuffixIndex,
     };
 
     #[track_caller]
@@ -844,7 +863,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_binary() {
+    fn parse_block_kind() {}
+
+    #[test]
+    fn print_block_kind() {
+        assert_to_tokens(BlockKind::Async, "async");
+        assert_to_tokens(BlockKind::Const, "const");
+        assert_to_tokens(BlockKind::Default, "");
+        assert_to_tokens(BlockKind::Loop, "loop");
+        assert_to_tokens(BlockKind::Try, "try");
+        assert_to_tokens(BlockKind::Unsafe, "unsafe");
+    }
+
+    #[test]
+    fn parse_expr_suffix_binary() {
         let binary = parse_str::<ExprSuffixBinary>("+ 0123").unwrap();
         assert!(matches!(binary.kind, ExprSuffixBinaryKind::Add));
         assert!(matches!(binary.expr.base, ExprBase::Lit(_)));
@@ -855,7 +887,7 @@ mod tests {
     }
 
     #[test]
-    fn print_binary() {
+    fn print_expr_suffix_binary() {
         assert_to_tokens(
             ExprSuffixBinary {
                 kind: ExprSuffixBinaryKind::Add,
@@ -873,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_binary_kind() {
+    fn parse_expr_suffix_binary_kind() {
         use ExprSuffixBinaryKind::{self as Kind, *};
 
         assert!(matches!(parse_str::<Kind>("+").unwrap(), Add));
@@ -915,7 +947,7 @@ mod tests {
     }
 
     #[test]
-    fn print_binary_kind() {
+    fn print_expr_suffix_binary_kind() {
         assert_to_tokens(ExprSuffixBinaryKind::Add, "+");
         assert_to_tokens(ExprSuffixBinaryKind::Sub, "-");
         assert_to_tokens(ExprSuffixBinaryKind::Mul, "*");
@@ -948,7 +980,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_call() {
+    fn parse_expr_suffix_call() {
         assert!(parse_str::<ExprSuffixCall>("()").unwrap().args.is_empty());
 
         let call = parse_str::<ExprSuffixCall>("(0123)").unwrap();
@@ -962,7 +994,7 @@ mod tests {
     }
 
     #[test]
-    fn print_call() {
+    fn print_expr_suffix_call() {
         assert_to_tokens(ExprSuffixCall { args: vec![] }, "()");
         assert_to_tokens(
             ExprSuffixCall {
@@ -982,7 +1014,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_cast() {
+    fn parse_expr_suffix_cast() {
         let cast = parse_str::<ExprSuffixCast>("as Type").unwrap();
         assert_token_stream(cast.ty, quote! { Type });
 
@@ -1016,7 +1048,7 @@ mod tests {
     }
 
     #[test]
-    fn print_cast() {
+    fn print_expr_suffix_cast() {
         assert_to_tokens(
             ExprSuffixCast {
                 ty: quote! { Type },
@@ -1032,7 +1064,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_dot() {
+    fn parse_expr_suffix_dot() {
         let Ok(ExprSuffixDot::Await) = parse_str(".await") else {
             panic!();
         };
@@ -1050,7 +1082,7 @@ mod tests {
     }
 
     #[test]
-    fn print_dot() {
+    fn print_expr_suffix_dot() {
         assert_to_tokens(ExprSuffixDot::Await, ".await");
 
         assert_to_tokens(
@@ -1089,7 +1121,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_dot_field() {
+    fn parse_expr_suffix_dot_field() {
         let Ok(ExprSuffixDotField::Named(ident)) = parse_str("ident") else {
             panic!();
         };
@@ -1107,13 +1139,13 @@ mod tests {
     }
 
     #[test]
-    fn print_dot_field() {
+    fn print_expr_suffix_dot_field() {
         assert_to_tokens(ExprSuffixDotField::Named(format_ident!("ident")), "ident");
         assert_to_tokens(ExprSuffixDotField::Unnamed(0123), "123");
     }
 
     #[test]
-    fn parse_dot_method_call() {
+    fn parse_expr_suffix_dot_method_call() {
         let method_call = parse_str::<ExprSuffixDotMethodCall>("ident()").unwrap();
         assert_eq!(method_call.ident, "ident");
         assert!(method_call.turbofish.is_none());
@@ -1149,7 +1181,7 @@ mod tests {
     }
 
     #[test]
-    fn print_dot_method_call() {
+    fn print_expr_suffix_dot_method_call() {
         assert_to_tokens(
             ExprSuffixDotMethodCall {
                 ident: format_ident!("ident"),
@@ -1170,7 +1202,7 @@ mod tests {
     }
 
     #[test]
-    fn print_index() {
+    fn print_expr_suffix_index() {
         assert_to_tokens(
             ExprSuffixIndex {
                 index: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
