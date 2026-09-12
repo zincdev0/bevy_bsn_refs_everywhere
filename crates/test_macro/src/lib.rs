@@ -1,9 +1,8 @@
 use proc_macro2::{Delimiter, Ident, Literal, Spacing, TokenStream, TokenTree};
-use quote::{ToTokens, format_ident, quote};
+use quote::{ToTokens, quote};
 use syn::{
-    Attribute, Index, Member, Result, Token,
-    buffer::Cursor,
-    parse::{Parse, ParseStream, Parser, StepCursor, discouraged::Speculative},
+    Lit, Result, Token,
+    parse::{Parse, ParseStream, Parser, discouraged::Speculative},
     parse_macro_input,
     punctuated::Punctuated,
 };
@@ -150,7 +149,17 @@ pub(crate) struct Expr {
 
 impl Parse for Expr {
     fn parse(input: ParseStream) -> Result<Self> {
-        todo!();
+        let fork = input.fork();
+
+        let base = fork.parse::<ExprBase>()?;
+
+        input.advance_to(&fork);
+        Ok(Expr {
+            attrs: TokenStream::new(),
+            prefixes: vec![],
+            base,
+            suffixes: vec![],
+        })
     }
 }
 
@@ -190,6 +199,18 @@ pub(crate) enum ExprBase {
     Struct(),
     Tuple(Vec<Expr>),
     While(),
+}
+
+impl Parse for ExprBase {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if let Ok(lit_parsed) = input.parse::<Lit>() {
+            let mut lit = TokenStream::new();
+            lit_parsed.to_tokens(&mut lit);
+            return Ok(ExprBase::Lit(lit));
+        }
+
+        Err(input.error("TODO: error strings"))
+    }
 }
 
 impl ToTokens for ExprBase {
@@ -319,6 +340,14 @@ impl ToTokens for ExprSuffix {
 pub(crate) struct ExprSuffixBinary {
     pub(crate) kind: ExprSuffixBinaryKind,
     pub(crate) expr: Box<Expr>,
+}
+
+impl Parse for ExprSuffixBinary {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let kind = input.parse::<ExprSuffixBinaryKind>()?;
+        let expr = Box::new(input.parse::<Expr>()?);
+        Ok(ExprSuffixBinary { kind, expr })
+    }
 }
 
 impl ToTokens for ExprSuffixBinary {
@@ -746,8 +775,8 @@ mod tests {
     use syn::parse_str;
 
     use crate::{
-        Expr, ExprBase, ExprSuffixBinaryKind, ExprSuffixCast, ExprSuffixDot, ExprSuffixDotField,
-        ExprSuffixDotMethodCall, ExprSuffixIndex,
+        Expr, ExprBase, ExprSuffixBinary, ExprSuffixBinaryKind, ExprSuffixCast, ExprSuffixDot,
+        ExprSuffixDotField, ExprSuffixDotMethodCall, ExprSuffixIndex,
     };
 
     #[track_caller]
@@ -788,6 +817,35 @@ mod tests {
             base,
             suffixes: vec![],
         })
+    }
+
+    #[test]
+    fn parse_binary() {
+        let binary = parse_str::<ExprSuffixBinary>("+ 0123").unwrap();
+        assert!(matches!(binary.kind, ExprSuffixBinaryKind::Add));
+        assert!(matches!(binary.expr.base, ExprBase::Lit(_)));
+
+        let binary = parse_str::<ExprSuffixBinary>("<<= \"foo\"").unwrap();
+        assert!(matches!(binary.kind, ExprSuffixBinaryKind::ShlAssign));
+        assert!(matches!(binary.expr.base, ExprBase::Lit(_)));
+    }
+
+    #[test]
+    fn print_binary() {
+        assert_to_tokens(
+            ExprSuffixBinary {
+                kind: ExprSuffixBinaryKind::Add,
+                expr: expr(ExprBase::Lit(quote! { 0123 })),
+            },
+            "+ 0123",
+        );
+        assert_to_tokens(
+            ExprSuffixBinary {
+                kind: ExprSuffixBinaryKind::ShlAssign,
+                expr: expr(ExprBase::Lit(quote! { "foo" })),
+            },
+            "<<= \"foo\"",
+        );
     }
 
     #[test]
