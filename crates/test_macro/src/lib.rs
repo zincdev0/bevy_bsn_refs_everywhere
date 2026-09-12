@@ -89,48 +89,19 @@ impl Parse for Closure {
     fn parse(input: ParseStream) -> Result<Self> {
         let fork = input.fork();
 
-        let (has_async, has_move, pats) = fork.step(|step_cursor| {
-            let (ident, cursor) = step_cursor.ident().unzip();
-            let cursor = cursor.unwrap_or(*step_cursor);
-            let has_async = ident.is_some_and(|ident| ident == "async");
+        let has_async = fork.parse::<Token![async]>().is_ok();
+        let has_move = fork.parse::<Token![move]>().is_ok();
 
-            let (ident, cursor) = cursor.ident().unzip();
-            let cursor = cursor.unwrap_or(*step_cursor);
-            let has_move = ident.is_some_and(|ident| ident == "move");
-
-            let mut cursor = if let Some((punct, cursor)) = cursor.punct()
-                && punct.as_char() == '|'
-                && let Spacing::Alone = punct.spacing()
-            {
-                cursor
-            } else {
-                return Err(step_cursor.error("TODO: error strings"));
-            };
-
-            let mut pats = TokenStream::new();
-            loop {
-                match cursor.token_tree() {
-                    Some((TokenTree::Punct(punct), next_cursor))
-                        if punct.as_char() == '|'
-                            && let Spacing::Alone = punct.spacing() =>
-                    {
-                        cursor = next_cursor;
-                        break;
-                    }
-                    Some((token_tree, next_cursor)) => {
-                        pats.extend(std::iter::once(token_tree));
-                        cursor = next_cursor;
-                    }
-                    None => return Err(step_cursor.error("TODO: error string")),
-                }
-            }
-
-            Ok(((has_async, has_move, pats), cursor))
-        })?;
+        fork.parse::<Token![|]>()?;
+        let mut pats = TokenStream::new();
+        while !fork.peek(Token![|]) {
+            pats.extend(std::iter::once(fork.parse::<TokenTree>()?));
+        }
+        fork.parse::<Token![|]>()?;
 
         let expr = fork.parse()?;
-        input.advance_to(&fork);
 
+        input.advance_to(&fork);
         Ok(Closure {
             has_async,
             has_move,
@@ -876,9 +847,9 @@ mod tests {
     };
 
     use crate::{
-        BlockKind, Expr, ExprBase, ExprPrefix, ExprSuffix, ExprSuffixBinary, ExprSuffixBinaryKind,
-        ExprSuffixCall, ExprSuffixCast, ExprSuffixDot, ExprSuffixDotField, ExprSuffixDotMethodCall,
-        ExprSuffixIndex,
+        BlockKind, Closure, Expr, ExprBase, ExprPrefix, ExprSuffix, ExprSuffixBinary,
+        ExprSuffixBinaryKind, ExprSuffixCall, ExprSuffixCast, ExprSuffixDot, ExprSuffixDotField,
+        ExprSuffixDotMethodCall, ExprSuffixIndex,
     };
 
     #[track_caller]
@@ -960,6 +931,81 @@ mod tests {
         assert_to_tokens(BlockKind::Loop, "loop");
         assert_to_tokens(BlockKind::Try, "try");
         assert_to_tokens(BlockKind::Unsafe, "unsafe");
+    }
+
+    #[test]
+    fn closure_parse() {
+        let closure = parse_str::<Closure>("|| 0123").unwrap();
+        assert_eq!(closure.has_async, false);
+        assert_eq!(closure.has_move, false);
+        assert!(closure.pats.is_empty());
+        assert!(matches!(closure.expr.base, ExprBase::Lit(_)));
+
+        let closure = parse_str::<Closure>("async || 0123").unwrap();
+        assert_eq!(closure.has_async, true);
+        assert_eq!(closure.has_move, false);
+
+        let closure = parse_str::<Closure>("move || 0123").unwrap();
+        assert_eq!(closure.has_async, false);
+        assert_eq!(closure.has_move, true);
+
+        let closure = parse_str::<Closure>("async move || 0123").unwrap();
+        assert_eq!(closure.has_async, true);
+        assert_eq!(closure.has_move, true);
+
+        let closure = parse_str::<Closure>("|ident: Type| 0123").unwrap();
+        assert_token_stream(closure.pats, quote! { ident: Type });
+
+        _ = parse_str::<Closure>("move async || 0123").unwrap_err();
+    }
+
+    #[test]
+    fn closure_print() {
+        assert_to_tokens(
+            Closure {
+                has_async: false,
+                has_move: false,
+                pats: TokenStream::new(),
+                expr: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
+            },
+            "|| 0123",
+        );
+        assert_to_tokens(
+            Closure {
+                has_async: true,
+                has_move: false,
+                pats: TokenStream::new(),
+                expr: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
+            },
+            "async || 0123",
+        );
+        assert_to_tokens(
+            Closure {
+                has_async: false,
+                has_move: true,
+                pats: TokenStream::new(),
+                expr: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
+            },
+            "move || 0123",
+        );
+        assert_to_tokens(
+            Closure {
+                has_async: true,
+                has_move: true,
+                pats: TokenStream::new(),
+                expr: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
+            },
+            "async move || 0123",
+        );
+        assert_to_tokens(
+            Closure {
+                has_async: false,
+                has_move: false,
+                pats: quote! { ident: Type },
+                expr: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
+            },
+            "|ident: Type| 0123",
+        );
     }
 
     #[test]
