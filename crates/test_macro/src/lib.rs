@@ -110,7 +110,7 @@ impl Parse for Closure {
             Ok(((has_async, has_move, pats), cursor))
         })?;
 
-        let expr = Box::new(fork.parse::<Expr>()?);
+        let expr = Box::new(fork.parse()?);
         input.advance_to(&fork);
 
         Ok(Closure {
@@ -151,7 +151,7 @@ impl Parse for Expr {
     fn parse(input: ParseStream) -> Result<Self> {
         let fork = input.fork();
 
-        let base = fork.parse::<ExprBase>()?;
+        let base = fork.parse()?;
 
         input.advance_to(&fork);
         Ok(Expr {
@@ -203,7 +203,7 @@ pub(crate) enum ExprBase {
 
 impl Parse for ExprBase {
     fn parse(input: ParseStream) -> Result<Self> {
-        if let Ok(lit_parsed) = input.parse::<Lit>() {
+        if let Ok(lit_parsed) = input.parse::<syn::Lit>() {
             let mut lit = TokenStream::new();
             lit_parsed.to_tokens(&mut lit);
             return Ok(ExprBase::Lit(lit));
@@ -344,8 +344,8 @@ pub(crate) struct ExprSuffixBinary {
 
 impl Parse for ExprSuffixBinary {
     fn parse(input: ParseStream) -> Result<Self> {
-        let kind = input.parse::<ExprSuffixBinaryKind>()?;
-        let expr = Box::new(input.parse::<Expr>()?);
+        let kind = input.parse()?;
+        let expr = Box::new(input.parse()?);
         Ok(ExprSuffixBinary { kind, expr })
     }
 }
