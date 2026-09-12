@@ -327,33 +327,31 @@ impl Parse for ExprPrefix {
             };
 
             match punct.as_char() {
-                '*' => (ExprPrefix::Deref, cursor),
-                '-' => (ExprPrefix::Neg, cursor),
-                '!' => (ExprPrefix::Not, cursor),
+                '*' => Ok((ExprPrefix::Deref, cursor)),
+                '-' => Ok((ExprPrefix::Neg, cursor)),
+                '!' => Ok((ExprPrefix::Not, cursor)),
                 '&' if let Some((ident_1, cursor)) = cursor.ident()
                     && ident_1 == "raw"
                     && let Some((ident_2, cursor)) = cursor.ident()
                     && ident_2 == "const" =>
                 {
-                    (ExprPrefix::RawConst, cursor)
+                    Ok((ExprPrefix::RawConst, cursor))
                 }
                 '&' if let Some((ident_1, cursor)) = cursor.ident()
                     && ident_1 == "raw"
                     && let Some((ident_2, cursor)) = cursor.ident()
                     && ident_2 == "mut" =>
                 {
-                    (ExprPrefix::RawMut, cursor)
+                    Ok((ExprPrefix::RawMut, cursor))
                 }
-                '&' if let None = cursor.ident() => (ExprPrefix::Ref, cursor),
+                '&' if let None = cursor.ident() => Ok((ExprPrefix::Ref, cursor)),
                 '&' if let Some((ident_1, cursor)) = cursor.ident()
                     && ident_1 == "mut" =>
                 {
-                    (ExprPrefix::RefMut, cursor)
+                    Ok((ExprPrefix::RefMut, cursor))
                 }
-                _ => return Err(step_cursor.error("TODO: error strings")),
-            };
-
-            todo!()
+                _ => Err(step_cursor.error("TODO: error strings")),
+            }
         })
     }
 }
@@ -364,7 +362,7 @@ impl ToTokens for ExprPrefix {
             ExprPrefix::Deref => quote! { * },
             ExprPrefix::Neg => quote! { - },
             ExprPrefix::Not => quote! { ! },
-            ExprPrefix::RawConst => quote! { &raw },
+            ExprPrefix::RawConst => quote! { &raw const },
             ExprPrefix::RawMut => quote! { &raw mut },
             ExprPrefix::Ref => quote! { & },
             ExprPrefix::RefMut => quote! { &mut },
@@ -881,8 +879,8 @@ mod tests {
     };
 
     use crate::{
-        BlockKind, Expr, ExprBase, ExprSuffixBinary, ExprSuffixBinaryKind, ExprSuffixCall,
-        ExprSuffixCast, ExprSuffixDot, ExprSuffixDotField, ExprSuffixDotMethodCall,
+        BlockKind, Expr, ExprBase, ExprPrefix, ExprSuffix, ExprSuffixBinary, ExprSuffixBinaryKind,
+        ExprSuffixCall, ExprSuffixCast, ExprSuffixDot, ExprSuffixDotField, ExprSuffixDotMethodCall,
         ExprSuffixIndex,
     };
 
@@ -965,6 +963,60 @@ mod tests {
         assert_to_tokens(BlockKind::Loop, "loop");
         assert_to_tokens(BlockKind::Try, "try");
         assert_to_tokens(BlockKind::Unsafe, "unsafe");
+    }
+
+    #[test]
+    fn expr_prefix_parse() {
+        assert!(matches!(parse_str("*").unwrap(), ExprPrefix::Deref));
+        assert!(matches!(parse_str("-").unwrap(), ExprPrefix::Neg));
+        assert!(matches!(parse_str("!").unwrap(), ExprPrefix::Not));
+        assert!(matches!(
+            parse_str("&raw const").unwrap(),
+            ExprPrefix::RawConst,
+        ));
+        assert!(matches!(parse_str("&raw mut").unwrap(), ExprPrefix::RawMut));
+        assert!(matches!(parse_str("&").unwrap(), ExprPrefix::Ref));
+        assert!(matches!(parse_str("&mut").unwrap(), ExprPrefix::RefMut));
+
+        _ = parse_str::<ExprPrefix>("&raw").unwrap_err();
+    }
+
+    #[test]
+    fn expr_prefix_print() {
+        assert_to_tokens(ExprPrefix::Deref, "*");
+        assert_to_tokens(ExprPrefix::Neg, "-");
+        assert_to_tokens(ExprPrefix::Not, "!");
+        assert_to_tokens(ExprPrefix::RawConst, "&raw const");
+        assert_to_tokens(ExprPrefix::RawMut, "&raw mut");
+        assert_to_tokens(ExprPrefix::Ref, "&");
+        assert_to_tokens(ExprPrefix::RefMut, "&mut");
+    }
+
+    #[test]
+    fn expr_prefix_respect() {
+        assert_respect::<ExprPrefix>(quote! { &raw });
+    }
+
+    #[test]
+    fn expr_suffix_parse() {
+        assert!(matches!(parse_str("+ 0").unwrap(), ExprSuffix::Binary(_)));
+        assert!(matches!(parse_str("(0123)").unwrap(), ExprSuffix::Call(_)));
+        assert!(matches!(parse_str("as Type").unwrap(), ExprSuffix::Cast(_)));
+        assert!(matches!(parse_str(".ident").unwrap(), ExprSuffix::Dot(_)));
+        assert!(matches!(parse_str("[0123]").unwrap(), ExprSuffix::Index(_)));
+        assert!(matches!(parse_str("?").unwrap(), ExprSuffix::Try));
+    }
+
+    #[test]
+    fn expr_suffix_print() {
+        assert_to_tokens(ExprSuffix::Try, "?");
+    }
+
+    #[test]
+    fn expr_suffix_respect() {
+        assert_respect::<ExprSuffix>(quote! { + });
+        assert_respect::<ExprSuffix>(quote! { as });
+        assert_respect::<ExprSuffix>(quote! { . });
     }
 
     #[test]
