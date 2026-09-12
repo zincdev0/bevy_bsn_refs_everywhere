@@ -425,40 +425,38 @@ impl Parse for ExprSuffixBinaryKind {
                 _ => (None, *step_cursor),
             };
 
+            use ExprSuffixBinaryKind::*;
             let kind = match punct {
-                Some(('+', None)) => ExprSuffixBinaryKind::Add,
-                Some(('-', None)) => ExprSuffixBinaryKind::Sub,
-                Some(('*', None)) => ExprSuffixBinaryKind::Mul,
-                Some(('/', None)) => ExprSuffixBinaryKind::Div,
-                Some(('%', None)) => ExprSuffixBinaryKind::Rem,
-                Some(('&', Some(('&', None)))) => ExprSuffixBinaryKind::And,
-                Some(('|', Some(('|', None)))) => ExprSuffixBinaryKind::Or,
-                Some(('^', None)) => ExprSuffixBinaryKind::BitXor,
-                Some(('&', None)) => ExprSuffixBinaryKind::BitAnd,
-                Some(('|', None)) => ExprSuffixBinaryKind::BitOr,
-                Some(('<', Some(('<', None)))) => ExprSuffixBinaryKind::Shl,
-                Some(('>', Some(('>', None)))) => ExprSuffixBinaryKind::Shr,
-                Some(('=', Some(('=', None)))) => ExprSuffixBinaryKind::Eq,
-                Some(('<', None)) => ExprSuffixBinaryKind::Lt,
-                Some(('<', Some(('=', None)))) => ExprSuffixBinaryKind::Le,
-                Some(('!', Some(('=', None)))) => ExprSuffixBinaryKind::Ne,
-                Some(('>', Some(('=', None)))) => ExprSuffixBinaryKind::Ge,
-                Some(('>', None)) => ExprSuffixBinaryKind::Gt,
-                Some(('=', None)) => ExprSuffixBinaryKind::Assign,
-                Some(('+', Some(('=', None)))) => ExprSuffixBinaryKind::AddAssign,
-                Some(('-', Some(('=', None)))) => ExprSuffixBinaryKind::SubAssign,
-                Some(('*', Some(('=', None)))) => ExprSuffixBinaryKind::MulAssign,
-                Some(('/', Some(('=', None)))) => ExprSuffixBinaryKind::DivAssign,
-                Some(('%', Some(('=', None)))) => ExprSuffixBinaryKind::RemAssign,
-                Some(('^', Some(('=', None)))) => ExprSuffixBinaryKind::BitXorAssign,
-                Some(('&', Some(('=', None)))) => ExprSuffixBinaryKind::BitAndAssign,
-                Some(('|', Some(('=', None)))) => ExprSuffixBinaryKind::BitOrAssign,
-                Some(('<', Some(('<', Some('='))))) => ExprSuffixBinaryKind::ShlAssign,
-                Some(('>', Some(('>', Some('='))))) => ExprSuffixBinaryKind::ShrAssign,
-                _ => match input.parse::<syn::BinOp>() {
-                    Ok(_) => unreachable!(),
-                    Err(error) => return Err(error),
-                },
+                Some(('+', None)) => Add,
+                Some(('-', None)) => Sub,
+                Some(('*', None)) => Mul,
+                Some(('/', None)) => Div,
+                Some(('%', None)) => Rem,
+                Some(('&', Some(('&', None)))) => And,
+                Some(('|', Some(('|', None)))) => Or,
+                Some(('^', None)) => BitXor,
+                Some(('&', None)) => BitAnd,
+                Some(('|', None)) => BitOr,
+                Some(('<', Some(('<', None)))) => Shl,
+                Some(('>', Some(('>', None)))) => Shr,
+                Some(('=', Some(('=', None)))) => Eq,
+                Some(('<', None)) => Lt,
+                Some(('<', Some(('=', None)))) => Le,
+                Some(('!', Some(('=', None)))) => Ne,
+                Some(('>', Some(('=', None)))) => Ge,
+                Some(('>', None)) => Gt,
+                Some(('=', None)) => Assign,
+                Some(('+', Some(('=', None)))) => AddAssign,
+                Some(('-', Some(('=', None)))) => SubAssign,
+                Some(('*', Some(('=', None)))) => MulAssign,
+                Some(('/', Some(('=', None)))) => DivAssign,
+                Some(('%', Some(('=', None)))) => RemAssign,
+                Some(('^', Some(('=', None)))) => BitXorAssign,
+                Some(('&', Some(('=', None)))) => BitAndAssign,
+                Some(('|', Some(('=', None)))) => BitOrAssign,
+                Some(('<', Some(('<', Some('='))))) => ShlAssign,
+                Some(('>', Some(('>', Some('='))))) => ShrAssign,
+                _ => return Err(step_cursor.error("TODO: error strings")),
             };
             Ok((kind, cursor))
         })
@@ -745,10 +743,11 @@ impl ToTokens for Stmt {
 mod tests {
     use proc_macro2::{TokenStream, TokenTree};
     use quote::{ToTokens, format_ident, quote};
+    use syn::parse_str;
 
     use crate::{
-        Expr, ExprBase, ExprSuffixCast, ExprSuffixDot, ExprSuffixDotField, ExprSuffixDotMethodCall,
-        ExprSuffixIndex,
+        Expr, ExprBase, ExprSuffixBinaryKind, ExprSuffixCast, ExprSuffixDot, ExprSuffixDotField,
+        ExprSuffixDotMethodCall, ExprSuffixIndex,
     };
 
     #[track_caller]
@@ -779,7 +778,7 @@ mod tests {
 
     #[track_caller]
     fn assert_to_tokens<T: ToTokens>(lhs: T, rhs: &str) {
-        assert_token_stream(quote! { #lhs }, syn::parse_str(rhs).unwrap());
+        assert_token_stream(quote! { #lhs }, parse_str(rhs).unwrap());
     }
 
     fn expr(base: ExprBase) -> Box<Expr> {
@@ -792,32 +791,107 @@ mod tests {
     }
 
     #[test]
+    fn parse_binary_kind() {
+        use ExprSuffixBinaryKind::{self as Kind, *};
+
+        assert!(matches!(parse_str::<Kind>("+").unwrap(), Add));
+        assert!(matches!(parse_str::<Kind>("-").unwrap(), Sub));
+        assert!(matches!(parse_str::<Kind>("*").unwrap(), Mul));
+        assert!(matches!(parse_str::<Kind>("/").unwrap(), Div));
+        assert!(matches!(parse_str::<Kind>("%").unwrap(), Rem));
+        assert!(matches!(parse_str::<Kind>("&&").unwrap(), And));
+        assert!(matches!(parse_str::<Kind>("||").unwrap(), Or));
+        assert!(matches!(parse_str::<Kind>("^").unwrap(), BitXor));
+        assert!(matches!(parse_str::<Kind>("&").unwrap(), BitAnd));
+        assert!(matches!(parse_str::<Kind>("|").unwrap(), BitOr));
+        assert!(matches!(parse_str::<Kind>("<<").unwrap(), Shl));
+        assert!(matches!(parse_str::<Kind>(">>").unwrap(), Shr));
+        assert!(matches!(parse_str::<Kind>("==").unwrap(), Eq));
+        assert!(matches!(parse_str::<Kind>("<").unwrap(), Lt));
+        assert!(matches!(parse_str::<Kind>("<=").unwrap(), Le));
+        assert!(matches!(parse_str::<Kind>("!=").unwrap(), Ne));
+        assert!(matches!(parse_str::<Kind>(">=").unwrap(), Ge));
+        assert!(matches!(parse_str::<Kind>(">").unwrap(), Gt));
+        assert!(matches!(parse_str::<Kind>("=").unwrap(), Assign));
+        assert!(matches!(parse_str::<Kind>("+=").unwrap(), AddAssign));
+        assert!(matches!(parse_str::<Kind>("-=").unwrap(), SubAssign));
+        assert!(matches!(parse_str::<Kind>("*=").unwrap(), MulAssign));
+        assert!(matches!(parse_str::<Kind>("/=").unwrap(), DivAssign));
+        assert!(matches!(parse_str::<Kind>("%=").unwrap(), RemAssign));
+        assert!(matches!(parse_str::<Kind>("^=").unwrap(), BitXorAssign));
+        assert!(matches!(parse_str::<Kind>("&=").unwrap(), BitAndAssign));
+        assert!(matches!(parse_str::<Kind>("|=").unwrap(), BitOrAssign));
+        assert!(matches!(parse_str::<Kind>("<<=").unwrap(), ShlAssign));
+        assert!(matches!(parse_str::<Kind>(">>=").unwrap(), ShrAssign));
+
+        _ = parse_str::<Kind>("+-").unwrap_err();
+        _ = parse_str::<Kind>("--").unwrap_err();
+        _ = parse_str::<Kind>("*-").unwrap_err();
+        _ = parse_str::<Kind>("/-").unwrap_err();
+        _ = parse_str::<Kind>("===").unwrap_err();
+        _ = parse_str::<Kind>("<<=<").unwrap_err();
+    }
+
+    #[test]
+    fn print_binary_kind() {
+        assert_to_tokens(ExprSuffixBinaryKind::Add, "+");
+        assert_to_tokens(ExprSuffixBinaryKind::Sub, "-");
+        assert_to_tokens(ExprSuffixBinaryKind::Mul, "*");
+        assert_to_tokens(ExprSuffixBinaryKind::Div, "/");
+        assert_to_tokens(ExprSuffixBinaryKind::Rem, "%");
+        assert_to_tokens(ExprSuffixBinaryKind::And, "&&");
+        assert_to_tokens(ExprSuffixBinaryKind::Or, "||");
+        assert_to_tokens(ExprSuffixBinaryKind::BitXor, "^");
+        assert_to_tokens(ExprSuffixBinaryKind::BitAnd, "&");
+        assert_to_tokens(ExprSuffixBinaryKind::BitOr, "|");
+        assert_to_tokens(ExprSuffixBinaryKind::Shl, "<<");
+        assert_to_tokens(ExprSuffixBinaryKind::Shr, ">>");
+        assert_to_tokens(ExprSuffixBinaryKind::Eq, "==");
+        assert_to_tokens(ExprSuffixBinaryKind::Lt, "<");
+        assert_to_tokens(ExprSuffixBinaryKind::Le, "<=");
+        assert_to_tokens(ExprSuffixBinaryKind::Ne, "!=");
+        assert_to_tokens(ExprSuffixBinaryKind::Ge, ">=");
+        assert_to_tokens(ExprSuffixBinaryKind::Gt, ">");
+        assert_to_tokens(ExprSuffixBinaryKind::Assign, "=");
+        assert_to_tokens(ExprSuffixBinaryKind::AddAssign, "+=");
+        assert_to_tokens(ExprSuffixBinaryKind::SubAssign, "-=");
+        assert_to_tokens(ExprSuffixBinaryKind::MulAssign, "*=");
+        assert_to_tokens(ExprSuffixBinaryKind::DivAssign, "/=");
+        assert_to_tokens(ExprSuffixBinaryKind::RemAssign, "%=");
+        assert_to_tokens(ExprSuffixBinaryKind::BitXorAssign, "^=");
+        assert_to_tokens(ExprSuffixBinaryKind::BitAndAssign, "&=");
+        assert_to_tokens(ExprSuffixBinaryKind::BitOrAssign, "|=");
+        assert_to_tokens(ExprSuffixBinaryKind::ShlAssign, "<<=");
+        assert_to_tokens(ExprSuffixBinaryKind::ShrAssign, ">>=");
+    }
+
+    #[test]
     fn parse_cast() {
-        let cast = syn::parse_str::<ExprSuffixCast>("as Type").unwrap();
+        let cast = parse_str::<ExprSuffixCast>("as Type").unwrap();
         assert_token_stream(cast.ty, quote! { Type });
 
-        let cast = syn::parse_str::<ExprSuffixCast>("as module::Type").unwrap();
+        let cast = parse_str::<ExprSuffixCast>("as module::Type").unwrap();
         assert_token_stream(cast.ty, quote! { module::Type });
 
-        let cast = syn::parse_str::<ExprSuffixCast>("as ::module::Type").unwrap();
+        let cast = parse_str::<ExprSuffixCast>("as ::module::Type").unwrap();
         assert_token_stream(cast.ty, quote! { ::module::Type });
 
-        let cast = syn::parse_str::<ExprSuffixCast>("as ::module::Type<T>").unwrap();
+        let cast = parse_str::<ExprSuffixCast>("as ::module::Type<T>").unwrap();
         assert_token_stream(cast.ty, quote! { ::module::Type<T> });
 
-        let cast = syn::parse_str::<ExprSuffixCast>("as ::module::Type::<T>").unwrap();
+        let cast = parse_str::<ExprSuffixCast>("as ::module::Type::<T>").unwrap();
         assert_token_stream(cast.ty, quote! { ::module::Type::<T> });
 
-        let cast = syn::parse_str::<ExprSuffixCast>("as <Type as Trait>::Assoc").unwrap();
+        let cast = parse_str::<ExprSuffixCast>("as <Type as Trait>::Assoc").unwrap();
         assert_token_stream(cast.ty, quote! { <Type as Trait>::Assoc });
 
-        let cast = syn::parse_str::<ExprSuffixCast>("as &T").unwrap();
+        let cast = parse_str::<ExprSuffixCast>("as &T").unwrap();
         assert_token_stream(cast.ty, quote! { &T });
 
-        let cast = syn::parse_str::<ExprSuffixCast>("as &'a T").unwrap();
+        let cast = parse_str::<ExprSuffixCast>("as &'a T").unwrap();
         assert_token_stream(cast.ty, quote! { &'a T });
 
-        let cast = syn::parse_str::<ExprSuffixCast>("as dyn T").unwrap();
+        let cast = parse_str::<ExprSuffixCast>("as dyn T").unwrap();
         assert_token_stream(cast.ty, quote! { dyn T });
     }
 
@@ -839,20 +913,20 @@ mod tests {
 
     #[test]
     fn parse_dot() {
-        let Ok(ExprSuffixDot::Await) = syn::parse_str(".await") else {
+        let Ok(ExprSuffixDot::Await) = parse_str(".await") else {
             panic!();
         };
-        let Ok(ExprSuffixDot::Field(field)) = syn::parse_str(".ident") else {
+        let Ok(ExprSuffixDot::Field(field)) = parse_str(".ident") else {
             panic!();
         };
-        let Ok(ExprSuffixDot::MethodCall(method_call)) = syn::parse_str(".call()") else {
+        let Ok(ExprSuffixDot::MethodCall(method_call)) = parse_str(".call()") else {
             panic!();
         };
 
-        _ = syn::parse_str::<ExprSuffixDot>("await").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDot>(".await()").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDot>(".ident::<>").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDot>(".await::<>()").unwrap_err();
+        _ = parse_str::<ExprSuffixDot>("await").unwrap_err();
+        _ = parse_str::<ExprSuffixDot>(".await()").unwrap_err();
+        _ = parse_str::<ExprSuffixDot>(".ident::<>").unwrap_err();
+        _ = parse_str::<ExprSuffixDot>(".await::<>()").unwrap_err();
     }
 
     #[test]
@@ -896,20 +970,20 @@ mod tests {
 
     #[test]
     fn parse_dot_field() {
-        let Ok(ExprSuffixDotField::Named(ident)) = syn::parse_str("ident") else {
+        let Ok(ExprSuffixDotField::Named(ident)) = parse_str("ident") else {
             panic!();
         };
         assert_eq!(ident, "ident");
 
-        let Ok(ExprSuffixDotField::Unnamed(index)) = syn::parse_str("0123") else {
+        let Ok(ExprSuffixDotField::Unnamed(index)) = parse_str("0123") else {
             panic!();
         };
         assert_eq!(index, 123);
 
-        _ = syn::parse_str::<ExprSuffixDotField>("+0").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotField>("0i32").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotField>("!").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotField>("()").unwrap_err();
+        _ = parse_str::<ExprSuffixDotField>("+0").unwrap_err();
+        _ = parse_str::<ExprSuffixDotField>("0i32").unwrap_err();
+        _ = parse_str::<ExprSuffixDotField>("!").unwrap_err();
+        _ = parse_str::<ExprSuffixDotField>("()").unwrap_err();
     }
 
     #[test]
@@ -920,38 +994,38 @@ mod tests {
 
     #[test]
     fn parse_dot_method_call() {
-        let method_call = syn::parse_str::<ExprSuffixDotMethodCall>("ident()").unwrap();
+        let method_call = parse_str::<ExprSuffixDotMethodCall>("ident()").unwrap();
         assert_eq!(method_call.ident, "ident");
         assert!(method_call.turbofish.is_none());
         assert!(method_call.args.is_empty());
 
-        let method_call = syn::parse_str::<ExprSuffixDotMethodCall>("ident::<>()").unwrap();
+        let method_call = parse_str::<ExprSuffixDotMethodCall>("ident::<>()").unwrap();
         assert_eq!(method_call.ident, "ident");
         assert!(method_call.turbofish.unwrap().is_empty());
         assert!(method_call.args.is_empty());
 
-        let method_call = syn::parse_str::<ExprSuffixDotMethodCall>("ident::<Type>()").unwrap();
+        let method_call = parse_str::<ExprSuffixDotMethodCall>("ident::<Type>()").unwrap();
         assert_eq!(method_call.ident, "ident");
         assert_token_stream(method_call.turbofish.unwrap(), quote! { Type });
         assert!(method_call.args.is_empty());
 
-        let method_call = syn::parse_str::<ExprSuffixDotMethodCall>("ident::<<Type>>()").unwrap();
+        let method_call = parse_str::<ExprSuffixDotMethodCall>("ident::<<Type>>()").unwrap();
         assert_eq!(method_call.ident, "ident");
         assert_token_stream(method_call.turbofish.unwrap(), quote! { <Type> });
         assert!(method_call.args.is_empty());
 
-        _ = syn::parse_str::<ExprSuffixDotMethodCall>("0").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotMethodCall>("!").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotMethodCall>("()").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotMethodCall>("ident").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotMethodCall>("ident:").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotMethodCall>("ident::").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotMethodCall>("ident::<").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotMethodCall>("ident::>").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotMethodCall>("ident::<>").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotMethodCall>("ident::<>(").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotMethodCall>("ident::<<>()").unwrap_err();
-        _ = syn::parse_str::<ExprSuffixDotMethodCall>("ident::<>>()").unwrap_err();
+        _ = parse_str::<ExprSuffixDotMethodCall>("0").unwrap_err();
+        _ = parse_str::<ExprSuffixDotMethodCall>("!").unwrap_err();
+        _ = parse_str::<ExprSuffixDotMethodCall>("()").unwrap_err();
+        _ = parse_str::<ExprSuffixDotMethodCall>("ident").unwrap_err();
+        _ = parse_str::<ExprSuffixDotMethodCall>("ident:").unwrap_err();
+        _ = parse_str::<ExprSuffixDotMethodCall>("ident::").unwrap_err();
+        _ = parse_str::<ExprSuffixDotMethodCall>("ident::<").unwrap_err();
+        _ = parse_str::<ExprSuffixDotMethodCall>("ident::>").unwrap_err();
+        _ = parse_str::<ExprSuffixDotMethodCall>("ident::<>").unwrap_err();
+        _ = parse_str::<ExprSuffixDotMethodCall>("ident::<>(").unwrap_err();
+        _ = parse_str::<ExprSuffixDotMethodCall>("ident::<<>()").unwrap_err();
+        _ = parse_str::<ExprSuffixDotMethodCall>("ident::<>>()").unwrap_err();
     }
 
     #[test]
