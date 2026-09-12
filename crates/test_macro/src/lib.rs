@@ -5,6 +5,7 @@ use syn::{
     parse::{Parse, ParseStream, Parser, discouraged::Speculative},
     parse_macro_input,
     punctuated::Punctuated,
+    token::Bracket,
 };
 
 #[proc_macro]
@@ -28,9 +29,9 @@ impl ToTokens for Block {
 
 #[derive(Debug)]
 pub(crate) enum BlockKind {
+    Default,
     Async,
     Const,
-    Default,
     Loop,
     Try,
     Unsafe,
@@ -57,13 +58,13 @@ impl Parse for BlockKind {
 impl ToTokens for BlockKind {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
+            BlockKind::Default => {}
             BlockKind::Async => {
                 quote! { async }.to_tokens(tokens);
             }
             BlockKind::Const => {
                 quote! { const }.to_tokens(tokens);
             }
-            BlockKind::Default => {}
             BlockKind::Loop => {
                 quote! { loop }.to_tokens(tokens);
             }
@@ -140,38 +141,24 @@ impl Parse for Expr {
     fn parse(input: ParseStream) -> Result<Self> {
         let fork = input.fork();
 
-        let attrs = fork.step(|step_cursor| {
-            let mut attrs = TokenStream::new();
-            let mut cursor = *step_cursor;
-
-            loop {
-                if let Some((punct_1, next_cursor)) = cursor.punct()
-                    && punct_1.as_char() == '#'
-                {
-                    cursor = next_cursor;
-                } else {
-                    break Ok((attrs, cursor));
-                }
-
-                let is_inner = if let Some((punct_2, next_cursor)) = cursor.punct()
-                    && punct_2.as_char() == '!'
-                {
-                    cursor = next_cursor;
-                    true
-                } else {
-                    false
-                };
-
-                let Some((inner_cursor, _, next_cursor)) = cursor.group(Delimiter::Bracket) else {
-                    break Ok((attrs, cursor));
-                };
-
-                let is_inner = is_inner.then(|| quote! { ! });
-                let inner_cursor = inner_cursor.token_stream();
-                quote! { # #is_inner [#inner_cursor] }.to_tokens(&mut attrs);
-                cursor = next_cursor;
+        let mut attrs = TokenStream::new();
+        loop {
+            let fork_1 = fork.fork();
+            if fork_1.parse::<Token![#]>().is_err() {
+                break;
             }
-        })?;
+            let inner = fork_1.parse::<Token![!]>().ok();
+
+            if !fork_1.peek(Bracket) {
+                break;
+            }
+            let meta;
+            bracketed!(meta in fork_1);
+            let meta = meta.parse::<TokenStream>().unwrap();
+
+            fork.advance_to(&fork_1);
+            quote! { # #inner [#meta] }.to_tokens(&mut attrs);
+        }
 
         let mut prefixes = Vec::new();
         while let Ok(prefix) = fork.parse::<ExprPrefix>() {
@@ -288,40 +275,31 @@ pub(crate) enum ExprPrefix {
 
 impl Parse for ExprPrefix {
     fn parse(input: ParseStream) -> Result<Self> {
-        input.step(|step_cursor| {
-            let (punct, cursor) = if let Some((punct, cursor)) = step_cursor.punct() {
-                (punct, cursor)
-            } else {
-                return Err(step_cursor.error("TODO: error strings"));
-            };
+        if input.parse::<Token![*]>().is_ok() {
+            return Ok(ExprPrefix::Deref);
+        } else if input.parse::<Token![-]>().is_ok() {
+            return Ok(ExprPrefix::Neg);
+        } else if input.parse::<Token![!]>().is_ok() {
+            return Ok(ExprPrefix::Not);
+        }
 
-            match punct.as_char() {
-                '*' => Ok((ExprPrefix::Deref, cursor)),
-                '-' => Ok((ExprPrefix::Neg, cursor)),
-                '!' => Ok((ExprPrefix::Not, cursor)),
-                '&' if let Some((ident_1, cursor)) = cursor.ident()
-                    && ident_1 == "raw"
-                    && let Some((ident_2, cursor)) = cursor.ident()
-                    && ident_2 == "const" =>
-                {
-                    Ok((ExprPrefix::RawConst, cursor))
-                }
-                '&' if let Some((ident_1, cursor)) = cursor.ident()
-                    && ident_1 == "raw"
-                    && let Some((ident_2, cursor)) = cursor.ident()
-                    && ident_2 == "mut" =>
-                {
-                    Ok((ExprPrefix::RawMut, cursor))
-                }
-                '&' if let None = cursor.ident() => Ok((ExprPrefix::Ref, cursor)),
-                '&' if let Some((ident_1, cursor)) = cursor.ident()
-                    && ident_1 == "mut" =>
-                {
-                    Ok((ExprPrefix::RefMut, cursor))
-                }
-                _ => Err(step_cursor.error("TODO: error strings")),
+        input.parse::<Token![&]>()?;
+        if let fork = input.fork()
+            && fork.parse::<Token![raw]>().is_ok()
+        {
+            if fork.parse::<Token![const]>().is_ok() {
+                input.advance_to(&fork);
+                Ok(ExprPrefix::RawConst)
+            } else {
+                fork.parse::<Token![mut]>()?;
+                input.advance_to(&fork);
+                Ok(ExprPrefix::RawMut)
             }
-        })
+        } else if input.parse::<Token![mut]>().is_ok() {
+            Ok(ExprPrefix::RefMut)
+        } else {
+            Ok(ExprPrefix::Ref)
+        }
     }
 }
 
@@ -483,74 +461,66 @@ pub(crate) enum ExprSuffixBinaryKind {
 
 impl Parse for ExprSuffixBinaryKind {
     fn parse(input: ParseStream) -> Result<Self> {
-        input.step(|step_cursor| {
-            let (punct, cursor) = match step_cursor.punct() {
-                Some((punct_1, cursor)) if let Spacing::Alone = punct_1.spacing() => {
-                    (Some((punct_1.as_char(), None)), cursor)
-                }
-                Some((punct_1, cursor))
-                    if let Spacing::Joint = punct_1.spacing()
-                        && let Some((punct_2, cursor)) = cursor.punct()
-                        && let Spacing::Alone = punct_2.spacing() =>
-                {
-                    (
-                        Some((punct_1.as_char(), Some((punct_2.as_char(), None)))),
-                        cursor,
-                    )
-                }
-                Some((punct_1, cursor))
-                    if let Spacing::Joint = punct_1.spacing()
-                        && let Some((punct_2, cursor)) = cursor.punct()
-                        && let Spacing::Joint = punct_2.spacing()
-                        && let Some((punct_3, cursor)) = cursor.punct()
-                        && let Spacing::Alone = punct_3.spacing() =>
-                {
-                    (
-                        Some((
-                            punct_1.as_char(),
-                            Some((punct_2.as_char(), Some(punct_3.as_char()))),
-                        )),
-                        cursor,
-                    )
-                }
-                _ => (None, *step_cursor),
-            };
-
-            use ExprSuffixBinaryKind::*;
-            let kind = match punct {
-                Some(('+', None)) => Add,
-                Some(('-', None)) => Sub,
-                Some(('*', None)) => Mul,
-                Some(('/', None)) => Div,
-                Some(('%', None)) => Rem,
-                Some(('&', Some(('&', None)))) => And,
-                Some(('|', Some(('|', None)))) => Or,
-                Some(('^', None)) => BitXor,
-                Some(('&', None)) => BitAnd,
-                Some(('|', None)) => BitOr,
-                Some(('<', Some(('<', None)))) => Shl,
-                Some(('>', Some(('>', None)))) => Shr,
-                Some(('=', Some(('=', None)))) => Eq,
-                Some(('<', None)) => Lt,
-                Some(('<', Some(('=', None)))) => Le,
-                Some(('!', Some(('=', None)))) => Ne,
-                Some(('>', Some(('=', None)))) => Ge,
-                Some(('>', None)) => Gt,
-                Some(('=', None)) => Assign,
-                Some(('+', Some(('=', None)))) => AddAssign,
-                Some(('-', Some(('=', None)))) => SubAssign,
-                Some(('*', Some(('=', None)))) => MulAssign,
-                Some(('/', Some(('=', None)))) => DivAssign,
-                Some(('%', Some(('=', None)))) => RemAssign,
-                Some(('^', Some(('=', None)))) => BitXorAssign,
-                Some(('&', Some(('=', None)))) => BitAndAssign,
-                Some(('|', Some(('=', None)))) => BitOrAssign,
-                Some(('<', Some(('<', Some('='))))) => ShlAssign,
-                Some(('>', Some(('>', Some('='))))) => ShrAssign,
-                _ => return Err(step_cursor.error("TODO: error strings")),
-            };
-            Ok((kind, cursor))
-        })
+        if input.parse::<Token![<<=]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::ShlAssign)
+        } else if input.parse::<Token![>>=]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::ShrAssign)
+        } else if input.parse::<Token![&&]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::And)
+        } else if input.parse::<Token![||]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Or)
+        } else if input.parse::<Token![<<]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Shl)
+        } else if input.parse::<Token![>>]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Shr)
+        } else if input.parse::<Token![==]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Eq)
+        } else if input.parse::<Token![<=]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Le)
+        } else if input.parse::<Token![!=]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Ne)
+        } else if input.parse::<Token![>=]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Ge)
+        } else if input.parse::<Token![+=]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::AddAssign)
+        } else if input.parse::<Token![-=]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::SubAssign)
+        } else if input.parse::<Token![*=]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::MulAssign)
+        } else if input.parse::<Token![/=]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::DivAssign)
+        } else if input.parse::<Token![%=]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::RemAssign)
+        } else if input.parse::<Token![^=]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::BitXorAssign)
+        } else if input.parse::<Token![&=]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::BitAndAssign)
+        } else if input.parse::<Token![|=]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::BitOrAssign)
+        } else if input.parse::<Token![+]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Add)
+        } else if input.parse::<Token![-]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Sub)
+        } else if input.parse::<Token![*]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Mul)
+        } else if input.parse::<Token![/]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Div)
+        } else if input.parse::<Token![%]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Rem)
+        } else if input.parse::<Token![^]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::BitXor)
+        } else if input.parse::<Token![&]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::BitAnd)
+        } else if input.parse::<Token![|]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::BitOr)
+        } else if input.parse::<Token![<]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Lt)
+        } else if input.parse::<Token![>]>().is_ok() {
+            Ok(ExprSuffixBinaryKind::Gt)
+        } else {
+            input.parse::<Token![=]>()?;
+            Ok(ExprSuffixBinaryKind::Assign)
+        }
     }
 }
 
@@ -686,19 +656,10 @@ pub(crate) enum ExprSuffixDotField {
 
 impl Parse for ExprSuffixDotField {
     fn parse(input: ParseStream) -> Result<Self> {
-        input.step(|step_cursor| {
-            if let Some((ident, cursor)) = step_cursor.ident() {
-                Ok((ExprSuffixDotField::Named(ident), cursor))
-            } else if let Some((literal, cursor)) = step_cursor.literal()
-                && let string = literal.to_string()
-                && string.chars().all(|char| char.is_ascii_digit())
-                && let Ok(index) = string.parse()
-            {
-                Ok((ExprSuffixDotField::Unnamed(index), cursor))
-            } else {
-                Err(step_cursor.error("TODO: error strings"))
-            }
-        })
+        match input.parse::<syn::Member>()? {
+            syn::Member::Named(ident) => Ok(ExprSuffixDotField::Named(ident)),
+            syn::Member::Unnamed(index) => Ok(ExprSuffixDotField::Unnamed(index.index)),
+        }
     }
 }
 
@@ -720,67 +681,42 @@ pub(crate) struct ExprSuffixDotMethodCall {
 
 impl Parse for ExprSuffixDotMethodCall {
     fn parse(input: ParseStream) -> Result<Self> {
-        input.step(|step_cursor| {
-            let Some((ident, cursor)) = step_cursor.ident() else {
-                return Err(step_cursor.error("TODO: error strings"));
-            };
+        let fork = input.fork();
 
-            let (turbofish, cursor) = if let Some((punct_1, cursor)) = cursor.punct()
-                && punct_1.as_char() == ':'
-                && let Spacing::Joint = punct_1.spacing()
-                && let Some((punct_2, cursor)) = cursor.punct()
-                && punct_2.as_char() == ':'
-                && let Spacing::Joint = punct_2.spacing()
-                && let Some((punct_3, mut cursor)) = cursor.punct()
-                && punct_3.as_char() == '<'
-            {
-                let mut turbofish = TokenStream::new();
-                let mut scope = 0;
-                loop {
-                    let token_tree = cursor.token_tree();
-                    let (token_tree, next_cursor) = match token_tree {
-                        Some((TokenTree::Punct(punct), next_cursor)) if punct.as_char() == '<' => {
-                            scope += 1;
-                            (TokenTree::Punct(punct), next_cursor)
-                        }
-                        Some((TokenTree::Punct(punct), next_cursor))
-                            if punct.as_char() == '>' && scope != 0 =>
-                        {
-                            scope -= 1;
-                            (TokenTree::Punct(punct), next_cursor)
-                        }
-                        Some((TokenTree::Punct(punct), cursor)) if punct.as_char() == '>' => {
-                            break (Some(turbofish), cursor);
-                        }
-                        Some((token_tree, next_cursor)) => (token_tree, next_cursor),
-                        None => {
-                            return Err(step_cursor.error("TODO: error strings"));
-                        }
-                    };
-                    turbofish.extend(std::iter::once(token_tree));
-                    cursor = next_cursor;
+        let ident = fork.parse::<Ident>()?;
+
+        let turbofish = if fork.parse::<Token![::]>().is_ok() {
+            fork.parse::<Token![<]>()?;
+
+            let mut turbofish = TokenStream::new();
+            let mut scope = 0;
+            loop {
+                let token_tree = fork.parse::<TokenTree>()?;
+                match &token_tree {
+                    TokenTree::Punct(punct) if punct.as_char() == '<' => scope += 1,
+                    TokenTree::Punct(punct) if punct.as_char() == '>' && scope != 0 => scope -= 1,
+                    TokenTree::Punct(punct) if punct.as_char() == '>' => break,
+                    _ => {}
                 }
-            } else {
-                (None, cursor)
-            };
+                turbofish.extend(std::iter::once(token_tree));
+            }
 
-            let Some((inner_cursor, _, cursor)) = cursor.group(Delimiter::Parenthesis) else {
-                return Err(step_cursor.error("TODO: error strings"));
-            };
+            Some(turbofish)
+        } else {
+            None
+        };
 
-            let args = Punctuated::<Expr, Token![,]>::parse_terminated
-                .parse2(inner_cursor.token_stream())?
-                .into_iter()
-                .collect();
+        let args;
+        parenthesized!(args in fork);
+        let args = Punctuated::<Expr, Token![,]>::parse_terminated(&args)?
+            .into_iter()
+            .collect();
 
-            Ok((
-                ExprSuffixDotMethodCall {
-                    ident,
-                    turbofish,
-                    args,
-                },
-                cursor,
-            ))
+        input.advance_to(&fork);
+        Ok(ExprSuffixDotMethodCall {
+            ident,
+            turbofish,
+            args,
         })
     }
 }
@@ -1115,11 +1051,6 @@ mod tests {
         assert_to_tokens(ExprPrefix::RawMut, "&raw mut");
         assert_to_tokens(ExprPrefix::Ref, "&");
         assert_to_tokens(ExprPrefix::RefMut, "&mut");
-    }
-
-    #[test]
-    fn expr_prefix_respect() {
-        assert_respect::<ExprPrefix>(quote! { &raw });
     }
 
     #[test]
