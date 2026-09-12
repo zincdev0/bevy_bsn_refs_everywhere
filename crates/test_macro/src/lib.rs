@@ -1,7 +1,7 @@
 use proc_macro2::{Delimiter, Ident, Literal, Spacing, TokenStream, TokenTree};
 use quote::{ToTokens, quote};
 use syn::{
-    Lit, Result, Token, parenthesized,
+    Result, Token, bracketed, parenthesized,
     parse::{Parse, ParseStream, Parser, discouraged::Speculative},
     parse_macro_input,
     punctuated::Punctuated,
@@ -10,7 +10,7 @@ use syn::{
 #[proc_macro]
 pub fn test(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as Expr);
-    quote! {}.into()
+    quote! { #input }.into()
 }
 
 #[derive(Debug)]
@@ -128,7 +128,7 @@ impl Parse for Closure {
             Ok(((has_async, has_move, pats), cursor))
         })?;
 
-        let expr = Box::new(fork.parse()?);
+        let expr = fork.parse()?;
         input.advance_to(&fork);
 
         Ok(Closure {
@@ -169,14 +169,57 @@ impl Parse for Expr {
     fn parse(input: ParseStream) -> Result<Self> {
         let fork = input.fork();
 
-        let base = fork.parse()?;
+        let attrs = fork.step(|step_cursor| {
+            let mut attrs = TokenStream::new();
+            let mut cursor = *step_cursor;
 
+            loop {
+                if let Some((punct_1, next_cursor)) = cursor.punct()
+                    && punct_1.as_char() == '#'
+                    && let Spacing::Joint = punct_1.spacing()
+                {
+                    cursor = next_cursor;
+                } else {
+                    break Ok((attrs, cursor));
+                }
+                let is_inner = if let Some((punct_2, next_cursor)) = cursor.punct()
+                    && punct_2.as_char() == '!'
+                {
+                    cursor = next_cursor;
+                    true
+                } else {
+                    false
+                };
+                let Some((inner_cursor, _, next_cursor)) = cursor.group(Delimiter::Bracket) else {
+                    break Ok((attrs, cursor));
+                };
+                quote! { # }.to_tokens(&mut attrs);
+                if is_inner {
+                    quote! { ! }.to_tokens(&mut attrs);
+                }
+                inner_cursor.token_stream().to_tokens(&mut attrs);
+                cursor = next_cursor;
+            }
+        })?;
+
+        let mut prefixes = Vec::new();
+        while let Ok(prefix) = fork.parse::<ExprPrefix>() {
+            prefixes.push(prefix);
+        }
+
+        let base = fork.parse()?;
         input.advance_to(&fork);
+
+        let mut suffixes = Vec::new();
+        while let Ok(suffix) = input.parse::<ExprSuffix>() {
+            suffixes.push(suffix);
+        }
+
         Ok(Expr {
-            attrs: TokenStream::new(),
-            prefixes: vec![],
+            attrs,
+            prefixes,
             base,
-            suffixes: vec![],
+            suffixes,
         })
     }
 }
@@ -340,16 +383,37 @@ pub(crate) enum ExprSuffix {
     Try,
 }
 
-// impl Parse for ExprSuffix {
-//     fn parse(input: ParseStream) -> Result<Self> {
-//         if let fork = input.fork()
-//             && let Ok(binary) = fork.parse()
-//         {
-//             Ok(ExprSuffix::Binary(binary))
-//         } else if let fork = input.fork()
-//             && let Ok()
-//     }
-// }
+impl Parse for ExprSuffix {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if let fork = input.fork()
+            && let Ok(binary) = fork.parse()
+        {
+            input.advance_to(&fork);
+            Ok(ExprSuffix::Binary(binary))
+        } else if let fork = input.fork()
+            && let Ok(call) = fork.parse()
+        {
+            input.advance_to(&fork);
+            Ok(ExprSuffix::Call(call))
+        } else if let fork = input.fork()
+            && let Ok(cast) = fork.parse()
+        {
+            input.advance_to(&fork);
+            Ok(ExprSuffix::Cast(cast))
+        } else if let fork = input.fork()
+            && let Ok(dot) = fork.parse()
+        {
+            input.advance_to(&fork);
+            Ok(ExprSuffix::Dot(dot))
+        } else if let Ok(index) = input.parse() {
+            Ok(ExprSuffix::Index(index))
+        } else if input.parse::<Token![?]>().is_ok() {
+            Ok(ExprSuffix::Try)
+        } else {
+            Err(input.error("TODO: error strings"))
+        }
+    }
+}
 
 impl ToTokens for ExprSuffix {
     fn to_tokens(&self, tokens: &mut TokenStream) {
@@ -373,8 +437,10 @@ pub(crate) struct ExprSuffixBinary {
 
 impl Parse for ExprSuffixBinary {
     fn parse(input: ParseStream) -> Result<Self> {
-        let kind = input.parse()?;
-        let expr = Box::new(input.parse()?);
+        let fork = input.fork();
+        let kind = fork.parse()?;
+        let expr = fork.parse()?;
+        input.advance_to(&fork);
         Ok(ExprSuffixBinary { kind, expr })
     }
 }
@@ -590,18 +656,11 @@ pub(crate) struct ExprSuffixCast {
 
 impl Parse for ExprSuffixCast {
     fn parse(input: ParseStream) -> Result<Self> {
-        // using `syn::Type` to fully parse the type instead of taking shortcuts, because I don't think casts would be
-        // extremely common and types without surrounding `<>` are very complex to skip.
-        //
-        // if this needs to be changed later, things to look out for are:
-        // - `module::T`
-        // - `::module::T`
-        // - `<T as U>::Assoc`
-        // - `&T`
-        // - `&'a T`
-        // - `dyn T`
-        _ = input.parse::<Token![as]>()?;
-        let ty_parsed = input.parse::<syn::Type>()?;
+        let fork = input.fork();
+        _ = fork.parse::<Token![as]>()?;
+        let ty_parsed = fork.parse::<syn::Type>()?;
+        input.advance_to(&fork);
+
         let mut ty = TokenStream::new();
         ty_parsed.to_tokens(&mut ty);
         Ok(ExprSuffixCast { ty })
@@ -624,12 +683,16 @@ pub(crate) enum ExprSuffixDot {
 
 impl Parse for ExprSuffixDot {
     fn parse(input: ParseStream) -> Result<Self> {
-        _ = input.parse::<Token![.]>()?;
-        if input.parse::<Token![await]>().is_ok() {
+        let fork = input.fork();
+        _ = fork.parse::<Token![.]>()?;
+        if fork.parse::<Token![await]>().is_ok() {
+            input.advance_to(&fork);
             Ok(ExprSuffixDot::Await)
-        } else if let Ok(method_call) = input.parse() {
+        } else if let Ok(method_call) = fork.parse() {
+            input.advance_to(&fork);
             Ok(ExprSuffixDot::MethodCall(method_call))
-        } else if let Ok(field) = input.parse() {
+        } else if let Ok(field) = fork.parse() {
+            input.advance_to(&fork);
             Ok(ExprSuffixDot::Field(field))
         } else {
             Err(input.error("TODO: error strings"))
@@ -739,24 +802,8 @@ impl Parse for ExprSuffixDotMethodCall {
                 return Err(step_cursor.error("TODO: error strings"));
             };
 
-            let mut args = TokenStream::new();
-            let Some((mut last_token_tree, mut inner_cursor)) = inner_cursor.token_tree() else {
-                return Ok((
-                    ExprSuffixDotMethodCall {
-                        ident,
-                        turbofish,
-                        args: vec![],
-                    },
-                    cursor,
-                ));
-            };
-            while let Some((token_tree, next_inner_cursor)) = inner_cursor.token_tree() {
-                args.extend(std::iter::once(last_token_tree));
-                last_token_tree = token_tree;
-                inner_cursor = next_inner_cursor;
-            }
             let args = Punctuated::<Expr, Token![,]>::parse_terminated
-                .parse2(args)?
+                .parse2(inner_cursor.token_stream())?
                 .into_iter()
                 .collect();
 
@@ -794,6 +841,17 @@ pub(crate) struct ExprSuffixIndex {
     pub(crate) index: Box<Expr>,
 }
 
+impl Parse for ExprSuffixIndex {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let fork = input.fork();
+        let content;
+        bracketed!(content in fork);
+        let index = content.parse()?;
+        input.advance_to(&fork);
+        Ok(ExprSuffixIndex { index })
+    }
+}
+
 impl ToTokens for ExprSuffixIndex {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let ExprSuffixIndex { index } = self;
@@ -812,9 +870,15 @@ impl ToTokens for Stmt {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Debug;
+
     use proc_macro2::{TokenStream, TokenTree};
     use quote::{ToTokens, format_ident, quote};
-    use syn::parse_str;
+    use syn::{
+        Result,
+        parse::{Parse, ParseBuffer, Parser},
+        parse_str,
+    };
 
     use crate::{
         BlockKind, Expr, ExprBase, ExprSuffixBinary, ExprSuffixBinaryKind, ExprSuffixCall,
@@ -853,6 +917,25 @@ mod tests {
         assert_token_stream(quote! { #lhs }, parse_str(rhs).unwrap());
     }
 
+    /// Asserts that the tokens in [`TokenStream`], which must be a partially valid value of `T` as tokens, are not
+    /// consumed when parsing an invalid value of `T`.
+    #[track_caller]
+    fn assert_respect<T: Parse + Debug>(tokens: TokenStream) {
+        fn parse_t_then_count_tokens<T: Parse + Debug>(input: &ParseBuffer) -> Result<usize> {
+            _ = input.parse::<T>().unwrap_err();
+            Ok(input.parse::<TokenStream>()?.into_iter().count())
+        }
+
+        let tokens_actual = parse_t_then_count_tokens::<T>
+            .parse2(tokens.clone())
+            .unwrap();
+        let tokens_expected = tokens.into_iter().count();
+        assert_eq!(
+            tokens_expected, tokens_actual,
+            "got an unexpected amount of tokens after parsing",
+        );
+    }
+
     fn expr(base: ExprBase) -> Expr {
         Expr {
             attrs: TokenStream::new(),
@@ -863,7 +946,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_block_kind() {
+    fn block_kind_parse() {
         assert!(matches!(parse_str("async").unwrap(), BlockKind::Async));
         assert!(matches!(parse_str("const").unwrap(), BlockKind::Const));
         assert!(matches!(parse_str("").unwrap(), BlockKind::Default));
@@ -875,7 +958,7 @@ mod tests {
     }
 
     #[test]
-    fn print_block_kind() {
+    fn block_kind_print() {
         assert_to_tokens(BlockKind::Async, "async");
         assert_to_tokens(BlockKind::Const, "const");
         assert_to_tokens(BlockKind::Default, "");
@@ -885,7 +968,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_expr_suffix_binary() {
+    fn expr_suffix_binary_parse() {
         let binary = parse_str::<ExprSuffixBinary>("+ 0123").unwrap();
         assert!(matches!(binary.kind, ExprSuffixBinaryKind::Add));
         assert!(matches!(binary.expr.base, ExprBase::Lit(_)));
@@ -898,7 +981,7 @@ mod tests {
     }
 
     #[test]
-    fn print_expr_suffix_binary() {
+    fn expr_suffix_binary_print() {
         assert_to_tokens(
             ExprSuffixBinary {
                 kind: ExprSuffixBinaryKind::Add,
@@ -916,7 +999,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_expr_suffix_binary_kind() {
+    fn expr_suffix_binary_respect() {
+        assert_respect::<ExprSuffixBinary>(quote! { + });
+        assert_respect::<ExprSuffixBinary>(quote! { <<= });
+    }
+
+    #[test]
+    fn expr_suffix_binary_kind_parse() {
         use ExprSuffixBinaryKind::{self as Kind, *};
 
         assert!(matches!(parse_str::<Kind>("+").unwrap(), Add));
@@ -958,7 +1047,7 @@ mod tests {
     }
 
     #[test]
-    fn print_expr_suffix_binary_kind() {
+    fn expr_suffix_binary_kind_print() {
         assert_to_tokens(ExprSuffixBinaryKind::Add, "+");
         assert_to_tokens(ExprSuffixBinaryKind::Sub, "-");
         assert_to_tokens(ExprSuffixBinaryKind::Mul, "*");
@@ -991,7 +1080,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_expr_suffix_call() {
+    fn expr_suffix_binary_kind_respect() {
+        assert_respect::<ExprSuffixBinaryKind>(quote! { ! });
+    }
+
+    #[test]
+    fn expr_suffix_call_parse() {
         assert!(parse_str::<ExprSuffixCall>("()").unwrap().args.is_empty());
 
         let call = parse_str::<ExprSuffixCall>("(0123)").unwrap();
@@ -1005,7 +1099,7 @@ mod tests {
     }
 
     #[test]
-    fn print_expr_suffix_call() {
+    fn expr_suffix_call_print() {
         assert_to_tokens(ExprSuffixCall { args: vec![] }, "()");
         assert_to_tokens(
             ExprSuffixCall {
@@ -1025,7 +1119,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_expr_suffix_cast() {
+    fn expr_suffix_cast_parse() {
         let cast = parse_str::<ExprSuffixCast>("as Type").unwrap();
         assert_token_stream(cast.ty, quote! { Type });
 
@@ -1059,7 +1153,7 @@ mod tests {
     }
 
     #[test]
-    fn print_expr_suffix_cast() {
+    fn expr_suffix_cast_print() {
         assert_to_tokens(
             ExprSuffixCast {
                 ty: quote! { Type },
@@ -1075,7 +1169,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_expr_suffix_dot() {
+    fn expr_suffix_cast_respect() {
+        assert_respect::<ExprSuffixCast>(quote! { as });
+        assert_respect::<ExprSuffixCast>(quote! { as :: });
+        assert_respect::<ExprSuffixCast>(quote! { as module:: });
+    }
+
+    #[test]
+    fn expr_suffix_dot_parse() {
         let Ok(ExprSuffixDot::Await) = parse_str(".await") else {
             panic!();
         };
@@ -1093,7 +1194,7 @@ mod tests {
     }
 
     #[test]
-    fn print_expr_suffix_dot() {
+    fn expr_suffix_dot_print() {
         assert_to_tokens(ExprSuffixDot::Await, ".await");
 
         assert_to_tokens(
@@ -1132,7 +1233,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_expr_suffix_dot_field() {
+    fn expr_suffix_dot_respect() {
+        assert_respect::<ExprSuffixDot>(quote! { . });
+    }
+
+    #[test]
+    fn expr_suffix_dot_field_parse() {
         let Ok(ExprSuffixDotField::Named(ident)) = parse_str("ident") else {
             panic!();
         };
@@ -1150,13 +1256,13 @@ mod tests {
     }
 
     #[test]
-    fn print_expr_suffix_dot_field() {
+    fn expr_suffix_dot_field_print() {
         assert_to_tokens(ExprSuffixDotField::Named(format_ident!("ident")), "ident");
         assert_to_tokens(ExprSuffixDotField::Unnamed(0123), "123");
     }
 
     #[test]
-    fn parse_expr_suffix_dot_method_call() {
+    fn expr_suffix_dot_method_call_parse() {
         let method_call = parse_str::<ExprSuffixDotMethodCall>("ident()").unwrap();
         assert_eq!(method_call.ident, "ident");
         assert!(method_call.turbofish.is_none());
@@ -1192,7 +1298,7 @@ mod tests {
     }
 
     #[test]
-    fn print_expr_suffix_dot_method_call() {
+    fn expr_suffix_dot_method_call_print() {
         assert_to_tokens(
             ExprSuffixDotMethodCall {
                 ident: format_ident!("ident"),
@@ -1213,7 +1319,30 @@ mod tests {
     }
 
     #[test]
-    fn print_expr_suffix_index() {
+    fn expr_suffix_dot_method_call_respect() {
+        assert_respect::<ExprSuffixDotMethodCall>(quote! { method });
+    }
+
+    #[test]
+    fn expr_suffix_index_parse() {
+        assert!(matches!(
+            parse_str::<ExprSuffixIndex>("[0123]").unwrap().index.base,
+            ExprBase::Lit(_),
+        ));
+        assert!(matches!(
+            parse_str::<ExprSuffixIndex>("[\"0123\"]")
+                .unwrap()
+                .index
+                .base,
+            ExprBase::Lit(_),
+        ));
+
+        _ = parse_str::<ExprSuffixIndex>("").unwrap_err();
+        _ = parse_str::<ExprSuffixIndex>("[0123 +]").unwrap_err();
+    }
+
+    #[test]
+    fn expr_suffix_index_print() {
         assert_to_tokens(
             ExprSuffixIndex {
                 index: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
