@@ -1,8 +1,11 @@
-use proc_macro2::{Delimiter, Ident, Literal, Spacing, TokenStream, TokenTree};
+pub(crate) mod prefix;
+pub(crate) use prefix::Prefix;
+
+use proc_macro2::{Ident, Literal, TokenStream, TokenTree};
 use quote::{ToTokens, quote};
 use syn::{
     Result, Token, bracketed, parenthesized,
-    parse::{Parse, ParseStream, Parser, discouraged::Speculative},
+    parse::{Parse, ParseStream, discouraged::Speculative},
     parse_macro_input,
     punctuated::Punctuated,
     token::Bracket,
@@ -12,6 +15,233 @@ use syn::{
 pub fn test(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as Expr);
     quote! { #input }.into()
+}
+
+#[derive(Debug)]
+pub(crate) enum Array {
+    Values(Vec<Expr>),
+    Repeat { value: Box<Expr>, amount: Box<Expr> },
+}
+
+impl Parse for Array {
+    fn parse(input: ParseStream) -> Result<Self> {
+        println!("started parse");
+        let fork = input.fork();
+        let content;
+        bracketed!(content in fork);
+        println!("got bracketed {content:?}");
+
+        let fork_1 = content.fork();
+        if let Ok(exprs) = Punctuated::<Expr, Token![,]>::parse_terminated(&fork_1) {
+            println!("a values");
+            input.advance_to(&fork);
+            println!("advanced");
+            return Ok(Array::Values(exprs.into_iter().collect()));
+        }
+
+        let value = content.parse()?;
+        _ = content.parse::<Token![;]>()?;
+        let amount = content.parse()?;
+        input.advance_to(&fork);
+        Ok(Array::Repeat { value, amount })
+    }
+}
+
+impl ToTokens for Array {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Array::Values(values) => quote! { [#(#values),*] },
+            Array::Repeat { value, amount } => quote! { [#value; #amount] },
+        }
+        .to_tokens(tokens);
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Binary {
+    pub(crate) op: BinaryOp,
+    pub(crate) expr: Box<Expr>,
+}
+
+impl Parse for Binary {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let fork = input.fork();
+        let op = fork.parse()?;
+        let expr = fork.parse()?;
+        input.advance_to(&fork);
+        Ok(Binary { op, expr })
+    }
+}
+
+impl ToTokens for Binary {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let Binary { op, expr } = self;
+        quote! { #op #expr }.to_tokens(tokens);
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum BinaryOp {
+    /// `+`
+    Add,
+    /// `-`
+    Sub,
+    /// `*`
+    Mul,
+    /// `/`
+    Div,
+    /// `%`
+    Rem,
+    /// `&&`
+    And,
+    /// `||`
+    Or,
+    /// `^`
+    BitXor,
+    /// `&`
+    BitAnd,
+    /// `|`
+    BitOr,
+    /// `<<`
+    Shl,
+    /// `>>`
+    Shr,
+    /// `==`
+    Eq,
+    /// `<`
+    Lt,
+    /// `<=`
+    Le,
+    /// `!=`
+    Ne,
+    /// `>=`
+    Ge,
+    /// `>`
+    Gt,
+    /// `=`
+    Assign,
+    /// `+=`
+    AddAssign,
+    /// `-=`
+    SubAssign,
+    /// `*=`
+    MulAssign,
+    /// `/=`
+    DivAssign,
+    /// `%=`
+    RemAssign,
+    /// `^=`
+    BitXorAssign,
+    /// `&=`
+    BitAndAssign,
+    /// `|=`
+    BitOrAssign,
+    /// `<<=`
+    ShlAssign,
+    /// `>>=`
+    ShrAssign,
+}
+
+impl Parse for BinaryOp {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if input.parse::<Token![<<=]>().is_ok() {
+            Ok(BinaryOp::ShlAssign)
+        } else if input.parse::<Token![>>=]>().is_ok() {
+            Ok(BinaryOp::ShrAssign)
+        } else if input.parse::<Token![&&]>().is_ok() {
+            Ok(BinaryOp::And)
+        } else if input.parse::<Token![||]>().is_ok() {
+            Ok(BinaryOp::Or)
+        } else if input.parse::<Token![<<]>().is_ok() {
+            Ok(BinaryOp::Shl)
+        } else if input.parse::<Token![>>]>().is_ok() {
+            Ok(BinaryOp::Shr)
+        } else if input.parse::<Token![==]>().is_ok() {
+            Ok(BinaryOp::Eq)
+        } else if input.parse::<Token![<=]>().is_ok() {
+            Ok(BinaryOp::Le)
+        } else if input.parse::<Token![!=]>().is_ok() {
+            Ok(BinaryOp::Ne)
+        } else if input.parse::<Token![>=]>().is_ok() {
+            Ok(BinaryOp::Ge)
+        } else if input.parse::<Token![+=]>().is_ok() {
+            Ok(BinaryOp::AddAssign)
+        } else if input.parse::<Token![-=]>().is_ok() {
+            Ok(BinaryOp::SubAssign)
+        } else if input.parse::<Token![*=]>().is_ok() {
+            Ok(BinaryOp::MulAssign)
+        } else if input.parse::<Token![/=]>().is_ok() {
+            Ok(BinaryOp::DivAssign)
+        } else if input.parse::<Token![%=]>().is_ok() {
+            Ok(BinaryOp::RemAssign)
+        } else if input.parse::<Token![^=]>().is_ok() {
+            Ok(BinaryOp::BitXorAssign)
+        } else if input.parse::<Token![&=]>().is_ok() {
+            Ok(BinaryOp::BitAndAssign)
+        } else if input.parse::<Token![|=]>().is_ok() {
+            Ok(BinaryOp::BitOrAssign)
+        } else if input.parse::<Token![+]>().is_ok() {
+            Ok(BinaryOp::Add)
+        } else if input.parse::<Token![-]>().is_ok() {
+            Ok(BinaryOp::Sub)
+        } else if input.parse::<Token![*]>().is_ok() {
+            Ok(BinaryOp::Mul)
+        } else if input.parse::<Token![/]>().is_ok() {
+            Ok(BinaryOp::Div)
+        } else if input.parse::<Token![%]>().is_ok() {
+            Ok(BinaryOp::Rem)
+        } else if input.parse::<Token![^]>().is_ok() {
+            Ok(BinaryOp::BitXor)
+        } else if input.parse::<Token![&]>().is_ok() {
+            Ok(BinaryOp::BitAnd)
+        } else if input.parse::<Token![|]>().is_ok() {
+            Ok(BinaryOp::BitOr)
+        } else if input.parse::<Token![<]>().is_ok() {
+            Ok(BinaryOp::Lt)
+        } else if input.parse::<Token![>]>().is_ok() {
+            Ok(BinaryOp::Gt)
+        } else {
+            input.parse::<Token![=]>()?;
+            Ok(BinaryOp::Assign)
+        }
+    }
+}
+
+impl ToTokens for BinaryOp {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            BinaryOp::Add => quote! { + },
+            BinaryOp::Sub => quote! { - },
+            BinaryOp::Mul => quote! { * },
+            BinaryOp::Div => quote! { / },
+            BinaryOp::Rem => quote! { % },
+            BinaryOp::And => quote! { && },
+            BinaryOp::Or => quote! { || },
+            BinaryOp::BitXor => quote! { ^ },
+            BinaryOp::BitAnd => quote! { & },
+            BinaryOp::BitOr => quote! { | },
+            BinaryOp::Shl => quote! { << },
+            BinaryOp::Shr => quote! { >> },
+            BinaryOp::Eq => quote! { == },
+            BinaryOp::Lt => quote! { < },
+            BinaryOp::Le => quote! { <= },
+            BinaryOp::Ne => quote! { != },
+            BinaryOp::Ge => quote! { >= },
+            BinaryOp::Gt => quote! { > },
+            BinaryOp::Assign => quote! { = },
+            BinaryOp::AddAssign => quote! { += },
+            BinaryOp::SubAssign => quote! { -= },
+            BinaryOp::MulAssign => quote! { *= },
+            BinaryOp::DivAssign => quote! { /= },
+            BinaryOp::RemAssign => quote! { %= },
+            BinaryOp::BitXorAssign => quote! { ^= },
+            BinaryOp::BitAndAssign => quote! { &= },
+            BinaryOp::BitOrAssign => quote! { |= },
+            BinaryOp::ShlAssign => quote! { <<= },
+            BinaryOp::ShrAssign => quote! { >>= },
+        }
+        .to_tokens(tokens);
+    }
 }
 
 #[derive(Debug)]
@@ -130,11 +360,96 @@ impl ToTokens for Closure {
 }
 
 #[derive(Debug)]
+pub(crate) struct Call {
+    pub(crate) args: Vec<Expr>,
+}
+
+impl Parse for Call {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let fork = input.fork();
+        let content;
+        parenthesized!(content in fork);
+        let args = Punctuated::<Expr, Token![,]>::parse_terminated(&content)?
+            .into_iter()
+            .collect();
+        input.advance_to(&fork);
+        Ok(Call { args })
+    }
+}
+
+impl ToTokens for Call {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let Call { args } = self;
+        quote! { ( #(#args),* ) }.to_tokens(tokens);
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Cast {
+    pub(crate) ty: TokenStream,
+}
+
+impl Parse for Cast {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let fork = input.fork();
+        _ = fork.parse::<Token![as]>()?;
+        let ty = fork.parse::<syn::Type>()?;
+        input.advance_to(&fork);
+        Ok(Cast {
+            ty: ty.to_token_stream(),
+        })
+    }
+}
+
+impl ToTokens for Cast {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let Cast { ty } = self;
+        quote! { as #ty }.to_tokens(tokens);
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum Dotted {
+    Await,
+    Field(Field),
+    MethodCall(MethodCall),
+}
+
+impl Parse for Dotted {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let fork = input.fork();
+        _ = fork.parse::<Token![.]>()?;
+        if let Ok(method_call) = fork.parse() {
+            input.advance_to(&fork);
+            Ok(Dotted::MethodCall(method_call))
+        } else if let Ok(field) = fork.parse() {
+            input.advance_to(&fork);
+            Ok(Dotted::Field(field))
+        } else {
+            fork.parse::<Token![await]>()?;
+            input.advance_to(&fork);
+            Ok(Dotted::Await)
+        }
+    }
+}
+
+impl ToTokens for Dotted {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Dotted::Await => quote! { .await },
+            Dotted::Field(field) => quote! { . #field },
+            Dotted::MethodCall(method_call) => quote! { . #method_call },
+        }
+        .to_tokens(tokens);
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct Expr {
     pub(crate) attrs: TokenStream,
-    pub(crate) prefixes: Vec<ExprPrefix>,
+    pub(crate) prefixes: Vec<Prefix>,
     pub(crate) base: ExprBase,
-    pub(crate) suffixes: Vec<ExprSuffix>,
+    pub(crate) suffixes: Vec<Suffix>,
 }
 
 impl Parse for Expr {
@@ -161,7 +476,7 @@ impl Parse for Expr {
         }
 
         let mut prefixes = Vec::new();
-        while let Ok(prefix) = fork.parse::<ExprPrefix>() {
+        while let Ok(prefix) = fork.parse::<Prefix>() {
             prefixes.push(prefix);
         }
 
@@ -169,7 +484,7 @@ impl Parse for Expr {
         input.advance_to(&fork);
 
         let mut suffixes = Vec::new();
-        while let Ok(suffix) = input.parse::<ExprSuffix>() {
+        while let Ok(suffix) = input.parse::<Suffix>() {
             suffixes.push(suffix);
         }
 
@@ -256,430 +571,60 @@ impl ToTokens for ExprBase {
 }
 
 #[derive(Debug)]
-pub(crate) enum ExprPrefix {
-    /// `*`
-    Deref,
-    /// `-`
-    Neg,
-    /// `!`
-    Not,
-    /// `&raw const`
-    RawConst,
-    /// `&raw mut`
-    RawMut,
-    /// `&`
-    Ref,
-    /// `&mut`
-    RefMut,
-}
-
-impl Parse for ExprPrefix {
-    fn parse(input: ParseStream) -> Result<Self> {
-        if input.parse::<Token![*]>().is_ok() {
-            return Ok(ExprPrefix::Deref);
-        } else if input.parse::<Token![-]>().is_ok() {
-            return Ok(ExprPrefix::Neg);
-        } else if input.parse::<Token![!]>().is_ok() {
-            return Ok(ExprPrefix::Not);
-        }
-
-        input.parse::<Token![&]>()?;
-        if let fork = input.fork()
-            && fork.parse::<Token![raw]>().is_ok()
-        {
-            if fork.parse::<Token![const]>().is_ok() {
-                input.advance_to(&fork);
-                Ok(ExprPrefix::RawConst)
-            } else {
-                fork.parse::<Token![mut]>()?;
-                input.advance_to(&fork);
-                Ok(ExprPrefix::RawMut)
-            }
-        } else if input.parse::<Token![mut]>().is_ok() {
-            Ok(ExprPrefix::RefMut)
-        } else {
-            Ok(ExprPrefix::Ref)
-        }
-    }
-}
-
-impl ToTokens for ExprPrefix {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        match self {
-            ExprPrefix::Deref => quote! { * },
-            ExprPrefix::Neg => quote! { - },
-            ExprPrefix::Not => quote! { ! },
-            ExprPrefix::RawConst => quote! { &raw const },
-            ExprPrefix::RawMut => quote! { &raw mut },
-            ExprPrefix::Ref => quote! { & },
-            ExprPrefix::RefMut => quote! { &mut },
-        }
-        .to_tokens(tokens);
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum ExprSuffix {
-    Binary(ExprSuffixBinary),
-    Call(ExprSuffixCall),
-    Cast(ExprSuffixCast),
-    Dot(ExprSuffixDot),
-    Index(ExprSuffixIndex),
-    Try,
-}
-
-impl Parse for ExprSuffix {
-    fn parse(input: ParseStream) -> Result<Self> {
-        if let fork = input.fork()
-            && let Ok(binary) = fork.parse()
-        {
-            input.advance_to(&fork);
-            Ok(ExprSuffix::Binary(binary))
-        } else if let fork = input.fork()
-            && let Ok(call) = fork.parse()
-        {
-            input.advance_to(&fork);
-            Ok(ExprSuffix::Call(call))
-        } else if let fork = input.fork()
-            && let Ok(cast) = fork.parse()
-        {
-            input.advance_to(&fork);
-            Ok(ExprSuffix::Cast(cast))
-        } else if let fork = input.fork()
-            && let Ok(dot) = fork.parse()
-        {
-            input.advance_to(&fork);
-            Ok(ExprSuffix::Dot(dot))
-        } else if let Ok(index) = input.parse() {
-            Ok(ExprSuffix::Index(index))
-        } else if input.parse::<Token![?]>().is_ok() {
-            Ok(ExprSuffix::Try)
-        } else {
-            Err(input.error("TODO: error strings"))
-        }
-    }
-}
-
-impl ToTokens for ExprSuffix {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        match self {
-            ExprSuffix::Binary(binary) => binary.to_tokens(tokens),
-            ExprSuffix::Call(call) => call.to_tokens(tokens),
-            ExprSuffix::Cast(cast) => cast.to_tokens(tokens),
-            ExprSuffix::Dot(dot) => dot.to_tokens(tokens),
-            ExprSuffix::Index(index) => index.to_tokens(tokens),
-            ExprSuffix::Try => quote! { ? }.to_tokens(tokens),
-        };
-    }
-}
-
-/// `$ExprBinaryKind $Expr`
-#[derive(Debug)]
-pub(crate) struct ExprSuffixBinary {
-    pub(crate) kind: ExprSuffixBinaryKind,
-    pub(crate) expr: Box<Expr>,
-}
-
-impl Parse for ExprSuffixBinary {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let fork = input.fork();
-        let kind = fork.parse()?;
-        let expr = fork.parse()?;
-        input.advance_to(&fork);
-        Ok(ExprSuffixBinary { kind, expr })
-    }
-}
-
-impl ToTokens for ExprSuffixBinary {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let ExprSuffixBinary { kind, expr } = self;
-        quote! { #kind #expr }.to_tokens(tokens);
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum ExprSuffixBinaryKind {
-    /// `+`
-    Add,
-    /// `-`
-    Sub,
-    /// `*`
-    Mul,
-    /// `/`
-    Div,
-    /// `%`
-    Rem,
-    /// `&&`
-    And,
-    /// `||`
-    Or,
-    /// `^`
-    BitXor,
-    /// `&`
-    BitAnd,
-    /// `|`
-    BitOr,
-    /// `<<`
-    Shl,
-    /// `>>`
-    Shr,
-    /// `==`
-    Eq,
-    /// `<`
-    Lt,
-    /// `<=`
-    Le,
-    /// `!=`
-    Ne,
-    /// `>=`
-    Ge,
-    /// `>`
-    Gt,
-    /// `=`
-    Assign,
-    /// `+=`
-    AddAssign,
-    /// `-=`
-    SubAssign,
-    /// `*=`
-    MulAssign,
-    /// `/=`
-    DivAssign,
-    /// `%=`
-    RemAssign,
-    /// `^=`
-    BitXorAssign,
-    /// `&=`
-    BitAndAssign,
-    /// `|=`
-    BitOrAssign,
-    /// `<<=`
-    ShlAssign,
-    /// `>>=`
-    ShrAssign,
-}
-
-impl Parse for ExprSuffixBinaryKind {
-    fn parse(input: ParseStream) -> Result<Self> {
-        if input.parse::<Token![<<=]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::ShlAssign)
-        } else if input.parse::<Token![>>=]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::ShrAssign)
-        } else if input.parse::<Token![&&]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::And)
-        } else if input.parse::<Token![||]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Or)
-        } else if input.parse::<Token![<<]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Shl)
-        } else if input.parse::<Token![>>]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Shr)
-        } else if input.parse::<Token![==]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Eq)
-        } else if input.parse::<Token![<=]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Le)
-        } else if input.parse::<Token![!=]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Ne)
-        } else if input.parse::<Token![>=]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Ge)
-        } else if input.parse::<Token![+=]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::AddAssign)
-        } else if input.parse::<Token![-=]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::SubAssign)
-        } else if input.parse::<Token![*=]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::MulAssign)
-        } else if input.parse::<Token![/=]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::DivAssign)
-        } else if input.parse::<Token![%=]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::RemAssign)
-        } else if input.parse::<Token![^=]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::BitXorAssign)
-        } else if input.parse::<Token![&=]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::BitAndAssign)
-        } else if input.parse::<Token![|=]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::BitOrAssign)
-        } else if input.parse::<Token![+]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Add)
-        } else if input.parse::<Token![-]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Sub)
-        } else if input.parse::<Token![*]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Mul)
-        } else if input.parse::<Token![/]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Div)
-        } else if input.parse::<Token![%]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Rem)
-        } else if input.parse::<Token![^]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::BitXor)
-        } else if input.parse::<Token![&]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::BitAnd)
-        } else if input.parse::<Token![|]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::BitOr)
-        } else if input.parse::<Token![<]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Lt)
-        } else if input.parse::<Token![>]>().is_ok() {
-            Ok(ExprSuffixBinaryKind::Gt)
-        } else {
-            input.parse::<Token![=]>()?;
-            Ok(ExprSuffixBinaryKind::Assign)
-        }
-    }
-}
-
-impl ToTokens for ExprSuffixBinaryKind {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        match self {
-            ExprSuffixBinaryKind::Add => quote! { + },
-            ExprSuffixBinaryKind::Sub => quote! { - },
-            ExprSuffixBinaryKind::Mul => quote! { * },
-            ExprSuffixBinaryKind::Div => quote! { / },
-            ExprSuffixBinaryKind::Rem => quote! { % },
-            ExprSuffixBinaryKind::And => quote! { && },
-            ExprSuffixBinaryKind::Or => quote! { || },
-            ExprSuffixBinaryKind::BitXor => quote! { ^ },
-            ExprSuffixBinaryKind::BitAnd => quote! { & },
-            ExprSuffixBinaryKind::BitOr => quote! { | },
-            ExprSuffixBinaryKind::Shl => quote! { << },
-            ExprSuffixBinaryKind::Shr => quote! { >> },
-            ExprSuffixBinaryKind::Eq => quote! { == },
-            ExprSuffixBinaryKind::Lt => quote! { < },
-            ExprSuffixBinaryKind::Le => quote! { <= },
-            ExprSuffixBinaryKind::Ne => quote! { != },
-            ExprSuffixBinaryKind::Ge => quote! { >= },
-            ExprSuffixBinaryKind::Gt => quote! { > },
-            ExprSuffixBinaryKind::Assign => quote! { = },
-            ExprSuffixBinaryKind::AddAssign => quote! { += },
-            ExprSuffixBinaryKind::SubAssign => quote! { -= },
-            ExprSuffixBinaryKind::MulAssign => quote! { *= },
-            ExprSuffixBinaryKind::DivAssign => quote! { /= },
-            ExprSuffixBinaryKind::RemAssign => quote! { %= },
-            ExprSuffixBinaryKind::BitXorAssign => quote! { ^= },
-            ExprSuffixBinaryKind::BitAndAssign => quote! { &= },
-            ExprSuffixBinaryKind::BitOrAssign => quote! { |= },
-            ExprSuffixBinaryKind::ShlAssign => quote! { <<= },
-            ExprSuffixBinaryKind::ShrAssign => quote! { >>= },
-        }
-        .to_tokens(tokens);
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct ExprSuffixCall {
-    pub(crate) args: Vec<Expr>,
-}
-
-impl Parse for ExprSuffixCall {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let fork = input.fork();
-        let content;
-        parenthesized!(content in fork);
-        let args = Punctuated::<Expr, Token![,]>::parse_terminated(&content)?
-            .into_iter()
-            .collect();
-        input.advance_to(&fork);
-        Ok(ExprSuffixCall { args })
-    }
-}
-
-impl ToTokens for ExprSuffixCall {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let ExprSuffixCall { args } = self;
-        quote! { ( #(#args),* ) }.to_tokens(tokens);
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct ExprSuffixCast {
-    pub(crate) ty: TokenStream,
-}
-
-impl Parse for ExprSuffixCast {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let fork = input.fork();
-        _ = fork.parse::<Token![as]>()?;
-        let ty_parsed = fork.parse::<syn::Type>()?;
-        input.advance_to(&fork);
-
-        let mut ty = TokenStream::new();
-        ty_parsed.to_tokens(&mut ty);
-        Ok(ExprSuffixCast { ty })
-    }
-}
-
-impl ToTokens for ExprSuffixCast {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let ExprSuffixCast { ty } = self;
-        quote! { as #ty }.to_tokens(tokens);
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum ExprSuffixDot {
-    Await,
-    Field(ExprSuffixDotField),
-    MethodCall(ExprSuffixDotMethodCall),
-}
-
-impl Parse for ExprSuffixDot {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let fork = input.fork();
-        _ = fork.parse::<Token![.]>()?;
-        if fork.parse::<Token![await]>().is_ok() {
-            input.advance_to(&fork);
-            Ok(ExprSuffixDot::Await)
-        } else if let Ok(method_call) = fork.parse() {
-            input.advance_to(&fork);
-            Ok(ExprSuffixDot::MethodCall(method_call))
-        } else if let Ok(field) = fork.parse() {
-            input.advance_to(&fork);
-            Ok(ExprSuffixDot::Field(field))
-        } else {
-            Err(input.error("TODO: error strings"))
-        }
-    }
-}
-
-impl ToTokens for ExprSuffixDot {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        match self {
-            ExprSuffixDot::Await => quote! { .await },
-            ExprSuffixDot::Field(field) => quote! { . #field },
-            ExprSuffixDot::MethodCall(method_call) => quote! { . #method_call },
-        }
-        .to_tokens(tokens);
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum ExprSuffixDotField {
+pub(crate) enum Field {
     Named(Ident),
     Unnamed(u32),
 }
 
-impl Parse for ExprSuffixDotField {
+impl Parse for Field {
     fn parse(input: ParseStream) -> Result<Self> {
         match input.parse::<syn::Member>()? {
-            syn::Member::Named(ident) => Ok(ExprSuffixDotField::Named(ident)),
-            syn::Member::Unnamed(index) => Ok(ExprSuffixDotField::Unnamed(index.index)),
+            syn::Member::Named(ident) => Ok(Field::Named(ident)),
+            syn::Member::Unnamed(index) => Ok(Field::Unnamed(index.index)),
         }
     }
 }
 
-impl ToTokens for ExprSuffixDotField {
+impl ToTokens for Field {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
-            ExprSuffixDotField::Named(ident) => ident.to_tokens(tokens),
-            ExprSuffixDotField::Unnamed(index) => Literal::u32_unsuffixed(*index).to_tokens(tokens),
+            Field::Named(ident) => ident.to_tokens(tokens),
+            Field::Unnamed(index) => Literal::u32_unsuffixed(*index).to_tokens(tokens),
         };
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct ExprSuffixDotMethodCall {
+pub(crate) struct Index {
+    pub(crate) index: Box<Expr>,
+}
+
+impl Parse for Index {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let fork = input.fork();
+        let content;
+        bracketed!(content in fork);
+        let index = content.parse()?;
+        input.advance_to(&fork);
+        Ok(Index { index })
+    }
+}
+
+impl ToTokens for Index {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let Index { index } = self;
+        quote! { [#index] }.to_tokens(tokens);
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct MethodCall {
     pub(crate) ident: Ident,
     pub(crate) turbofish: Option<TokenStream>,
     pub(crate) args: Vec<Expr>,
 }
 
-impl Parse for ExprSuffixDotMethodCall {
+impl Parse for MethodCall {
     fn parse(input: ParseStream) -> Result<Self> {
         let fork = input.fork();
 
@@ -713,7 +658,7 @@ impl Parse for ExprSuffixDotMethodCall {
             .collect();
 
         input.advance_to(&fork);
-        Ok(ExprSuffixDotMethodCall {
+        Ok(MethodCall {
             ident,
             turbofish,
             args,
@@ -721,9 +666,9 @@ impl Parse for ExprSuffixDotMethodCall {
     }
 }
 
-impl ToTokens for ExprSuffixDotMethodCall {
+impl ToTokens for MethodCall {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let ExprSuffixDotMethodCall {
+        let MethodCall {
             ident,
             turbofish,
             args,
@@ -739,29 +684,6 @@ impl ToTokens for ExprSuffixDotMethodCall {
 }
 
 #[derive(Debug)]
-pub(crate) struct ExprSuffixIndex {
-    pub(crate) index: Box<Expr>,
-}
-
-impl Parse for ExprSuffixIndex {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let fork = input.fork();
-        let content;
-        bracketed!(content in fork);
-        let index = content.parse()?;
-        input.advance_to(&fork);
-        Ok(ExprSuffixIndex { index })
-    }
-}
-
-impl ToTokens for ExprSuffixIndex {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let ExprSuffixIndex { index } = self;
-        quote! { [#index] }.to_tokens(tokens);
-    }
-}
-
-#[derive(Debug)]
 pub(crate) struct Stmt {}
 
 impl ToTokens for Stmt {
@@ -770,26 +692,83 @@ impl ToTokens for Stmt {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum Suffix {
+    Binary(Binary),
+    Call(Call),
+    Cast(Cast),
+    Dot(Dotted),
+    Index(Index),
+    Try,
+}
+
+impl Parse for Suffix {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if let Ok(binary) = input.parse() {
+            Ok(Suffix::Binary(binary))
+        } else if let Ok(call) = input.parse() {
+            Ok(Suffix::Call(call))
+        } else if let Ok(cast) = input.parse() {
+            Ok(Suffix::Cast(cast))
+        } else if let Ok(dot) = input.parse() {
+            Ok(Suffix::Dot(dot))
+        } else if let Ok(index) = input.parse() {
+            Ok(Suffix::Index(index))
+        } else {
+            input.parse::<Token![?]>()?;
+            Ok(Suffix::Try)
+        }
+    }
+}
+
+impl ToTokens for Suffix {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Suffix::Binary(binary) => binary.to_tokens(tokens),
+            Suffix::Call(call) => call.to_tokens(tokens),
+            Suffix::Cast(cast) => cast.to_tokens(tokens),
+            Suffix::Dot(dot) => dot.to_tokens(tokens),
+            Suffix::Index(index) => index.to_tokens(tokens),
+            Suffix::Try => quote! { ? }.to_tokens(tokens),
+        };
+    }
+}
+
 #[cfg(test)]
-mod tests {
+mod test {
     use std::fmt::Debug;
 
     use proc_macro2::{TokenStream, TokenTree};
-    use quote::{ToTokens, format_ident, quote};
+    use quote::{ToTokens, quote};
     use syn::{
         Result,
         parse::{Parse, ParseBuffer, Parser},
         parse_str,
     };
 
-    use crate::{
-        BlockKind, Closure, Expr, ExprBase, ExprPrefix, ExprSuffix, ExprSuffixBinary,
-        ExprSuffixBinaryKind, ExprSuffixCall, ExprSuffixCast, ExprSuffixDot, ExprSuffixDotField,
-        ExprSuffixDotMethodCall, ExprSuffixIndex,
-    };
+    #[macro_export]
+    macro_rules! assert_parse {
+        ($ty:ty, $pat:pat, $($tokens:tt)*) => {
+            assert!(matches!(
+                ::syn::parse2::<$ty>(::quote::quote! { $($tokens)* }),
+                $pat,
+            ));
+        };
+    }
+
+    #[macro_export]
+    macro_rules! assert_to_tokens {
+        ($value:expr, $($tokens:tt)*) => {
+            let value = $value;
+            $crate::test::assert_token_stream(
+                ::quote::quote! { #value },
+                ::quote::quote! { $($tokens)* },
+            )
+        };
+    }
 
     #[track_caller]
-    fn assert_token_stream(lhs: TokenStream, rhs: TokenStream) {
+    pub(crate) fn assert_token_stream(lhs: TokenStream, rhs: TokenStream) {
         let mut lhs = lhs.into_iter();
         let mut rhs = rhs.into_iter();
         while let (lhs, rhs) = (lhs.next(), rhs.next())
@@ -815,14 +794,14 @@ mod tests {
     }
 
     #[track_caller]
-    fn assert_to_tokens<T: ToTokens>(lhs: T, rhs: &str) {
+    pub(crate) fn assert_to_tokens<T: ToTokens>(lhs: T, rhs: &str) {
         assert_token_stream(quote! { #lhs }, parse_str(rhs).unwrap());
     }
 
     /// Asserts that the tokens in [`TokenStream`], which must be a partially valid value of `T` as tokens, are not
     /// consumed when parsing an invalid value of `T`.
     #[track_caller]
-    fn assert_respect<T: Parse + Debug>(tokens: TokenStream) {
+    pub(crate) fn assert_respect<T: Parse + Debug>(tokens: TokenStream) {
         fn parse_t_then_count_tokens<T: Parse + Debug>(input: &ParseBuffer) -> Result<usize> {
             _ = input.parse::<T>().unwrap_err();
             Ok(input.parse::<TokenStream>()?.into_iter().count())
@@ -837,6 +816,25 @@ mod tests {
             "got an unexpected amount of tokens after parsing",
         );
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fmt::Debug;
+
+    use proc_macro2::{TokenStream, TokenTree};
+    use quote::{ToTokens, format_ident, quote};
+    use syn::{
+        Result,
+        parse::{Parse, ParseBuffer, Parser},
+        parse_str,
+    };
+
+    use crate::{
+        Array, Binary, BinaryOp, BlockKind, Call, Cast, Closure, Dotted, Expr, ExprBase, Field,
+        Index, MethodCall, Prefix, Suffix,
+        test::{assert_respect, assert_to_tokens, assert_token_stream},
+    };
 
     fn expr(base: ExprBase) -> Expr {
         Expr {
@@ -845,6 +843,174 @@ mod tests {
             base,
             suffixes: vec![],
         }
+    }
+
+    #[test]
+    fn array_parse() {
+        let Array::Values(values) = parse_str::<Array>("[]").unwrap() else {
+            panic!();
+        };
+        assert!(values.is_empty());
+
+        let Array::Values(values) = parse_str::<Array>("[0123]").unwrap() else {
+            panic!();
+        };
+        assert_eq!(values.len(), 1);
+        assert!(matches!(values[0].base, ExprBase::Lit(_)));
+
+        let Array::Values(values) = parse_str::<Array>("[0123,]").unwrap() else {
+            panic!();
+        };
+        assert_eq!(values.len(), 1);
+        assert!(matches!(values[0].base, ExprBase::Lit(_)));
+
+        let Array::Values(values) = parse_str::<Array>("[0123, 0123]").unwrap() else {
+            panic!();
+        };
+        assert_eq!(values.len(), 2);
+        assert!(matches!(values[0].base, ExprBase::Lit(_)));
+        assert!(matches!(values[1].base, ExprBase::Lit(_)));
+    }
+
+    #[test]
+    fn array_print() {
+        assert_to_tokens(Array::Values(vec![]), "[]");
+        assert_to_tokens(
+            Array::Values(vec![expr(ExprBase::Lit(quote! { 0123 }))]),
+            "[0123]",
+        );
+        assert_to_tokens(
+            Array::Values(vec![
+                expr(ExprBase::Lit(quote! { 0123 })),
+                expr(ExprBase::Lit(quote! { "foo" })),
+            ]),
+            "[0123, \"foo\"]",
+        );
+
+        assert_to_tokens(
+            Array::Repeat {
+                value: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
+                amount: Box::new(expr(ExprBase::Lit(quote! { "foo" }))),
+            },
+            "[0123; \"foo\"]",
+        );
+    }
+
+    #[test]
+    fn binary_parse() {
+        let binary = parse_str::<Binary>("+ 0123").unwrap();
+        assert!(matches!(binary.op, BinaryOp::Add));
+        assert!(matches!(binary.expr.base, ExprBase::Lit(_)));
+
+        let binary = parse_str::<Binary>("<<= \"foo\"").unwrap();
+        assert!(matches!(binary.op, BinaryOp::ShlAssign));
+        assert!(matches!(binary.expr.base, ExprBase::Lit(_)));
+
+        _ = parse_str::<Binary>("<Type>").unwrap_err();
+    }
+
+    #[test]
+    fn binary_print() {
+        assert_to_tokens(
+            Binary {
+                op: BinaryOp::Add,
+                expr: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
+            },
+            "+ 0123",
+        );
+        assert_to_tokens(
+            Binary {
+                op: BinaryOp::ShlAssign,
+                expr: Box::new(expr(ExprBase::Lit(quote! { "foo" }))),
+            },
+            "<<= \"foo\"",
+        );
+    }
+
+    #[test]
+    fn binary_respect() {
+        assert_respect::<Binary>(quote! { + });
+        assert_respect::<Binary>(quote! { <<= });
+    }
+
+    #[test]
+    fn binary_op_parse() {
+        use BinaryOp::{self as Op, *};
+
+        assert!(matches!(parse_str::<Op>("+").unwrap(), Add));
+        assert!(matches!(parse_str::<Op>("-").unwrap(), Sub));
+        assert!(matches!(parse_str::<Op>("*").unwrap(), Mul));
+        assert!(matches!(parse_str::<Op>("/").unwrap(), Div));
+        assert!(matches!(parse_str::<Op>("%").unwrap(), Rem));
+        assert!(matches!(parse_str::<Op>("&&").unwrap(), And));
+        assert!(matches!(parse_str::<Op>("||").unwrap(), Or));
+        assert!(matches!(parse_str::<Op>("^").unwrap(), BitXor));
+        assert!(matches!(parse_str::<Op>("&").unwrap(), BitAnd));
+        assert!(matches!(parse_str::<Op>("|").unwrap(), BitOr));
+        assert!(matches!(parse_str::<Op>("<<").unwrap(), Shl));
+        assert!(matches!(parse_str::<Op>(">>").unwrap(), Shr));
+        assert!(matches!(parse_str::<Op>("==").unwrap(), Eq));
+        assert!(matches!(parse_str::<Op>("<").unwrap(), Lt));
+        assert!(matches!(parse_str::<Op>("<=").unwrap(), Le));
+        assert!(matches!(parse_str::<Op>("!=").unwrap(), Ne));
+        assert!(matches!(parse_str::<Op>(">=").unwrap(), Ge));
+        assert!(matches!(parse_str::<Op>(">").unwrap(), Gt));
+        assert!(matches!(parse_str::<Op>("=").unwrap(), Assign));
+        assert!(matches!(parse_str::<Op>("+=").unwrap(), AddAssign));
+        assert!(matches!(parse_str::<Op>("-=").unwrap(), SubAssign));
+        assert!(matches!(parse_str::<Op>("*=").unwrap(), MulAssign));
+        assert!(matches!(parse_str::<Op>("/=").unwrap(), DivAssign));
+        assert!(matches!(parse_str::<Op>("%=").unwrap(), RemAssign));
+        assert!(matches!(parse_str::<Op>("^=").unwrap(), BitXorAssign));
+        assert!(matches!(parse_str::<Op>("&=").unwrap(), BitAndAssign));
+        assert!(matches!(parse_str::<Op>("|=").unwrap(), BitOrAssign));
+        assert!(matches!(parse_str::<Op>("<<=").unwrap(), ShlAssign));
+        assert!(matches!(parse_str::<Op>(">>=").unwrap(), ShrAssign));
+
+        _ = parse_str::<Op>("+-").unwrap_err();
+        _ = parse_str::<Op>("--").unwrap_err();
+        _ = parse_str::<Op>("*-").unwrap_err();
+        _ = parse_str::<Op>("/-").unwrap_err();
+        _ = parse_str::<Op>("===").unwrap_err();
+        _ = parse_str::<Op>("<<=<").unwrap_err();
+    }
+
+    #[test]
+    fn binary_op_print() {
+        assert_to_tokens(BinaryOp::Add, "+");
+        assert_to_tokens(BinaryOp::Sub, "-");
+        assert_to_tokens(BinaryOp::Mul, "*");
+        assert_to_tokens(BinaryOp::Div, "/");
+        assert_to_tokens(BinaryOp::Rem, "%");
+        assert_to_tokens(BinaryOp::And, "&&");
+        assert_to_tokens(BinaryOp::Or, "||");
+        assert_to_tokens(BinaryOp::BitXor, "^");
+        assert_to_tokens(BinaryOp::BitAnd, "&");
+        assert_to_tokens(BinaryOp::BitOr, "|");
+        assert_to_tokens(BinaryOp::Shl, "<<");
+        assert_to_tokens(BinaryOp::Shr, ">>");
+        assert_to_tokens(BinaryOp::Eq, "==");
+        assert_to_tokens(BinaryOp::Lt, "<");
+        assert_to_tokens(BinaryOp::Le, "<=");
+        assert_to_tokens(BinaryOp::Ne, "!=");
+        assert_to_tokens(BinaryOp::Ge, ">=");
+        assert_to_tokens(BinaryOp::Gt, ">");
+        assert_to_tokens(BinaryOp::Assign, "=");
+        assert_to_tokens(BinaryOp::AddAssign, "+=");
+        assert_to_tokens(BinaryOp::SubAssign, "-=");
+        assert_to_tokens(BinaryOp::MulAssign, "*=");
+        assert_to_tokens(BinaryOp::DivAssign, "/=");
+        assert_to_tokens(BinaryOp::RemAssign, "%=");
+        assert_to_tokens(BinaryOp::BitXorAssign, "^=");
+        assert_to_tokens(BinaryOp::BitAndAssign, "&=");
+        assert_to_tokens(BinaryOp::BitOrAssign, "|=");
+        assert_to_tokens(BinaryOp::ShlAssign, "<<=");
+        assert_to_tokens(BinaryOp::ShrAssign, ">>=");
+    }
+
+    #[test]
+    fn binary_op_respect() {
+        assert_respect::<BinaryOp>(quote! { ! });
     }
 
     #[test]
@@ -945,6 +1111,156 @@ mod tests {
     }
 
     #[test]
+    fn call_parse() {
+        assert!(parse_str::<Call>("()").unwrap().args.is_empty());
+
+        let call = parse_str::<Call>("(0123)").unwrap();
+        assert_eq!(call.args.len(), 1);
+        assert!(matches!(call.args[0].base, ExprBase::Lit(_)));
+
+        let call = parse_str::<Call>("(\"foo\", \"bar\",)").unwrap();
+        assert_eq!(call.args.len(), 2);
+        assert!(matches!(call.args[0].base, ExprBase::Lit(_)));
+        assert!(matches!(call.args[1].base, ExprBase::Lit(_)));
+    }
+
+    #[test]
+    fn call_print() {
+        assert_to_tokens(Call { args: vec![] }, "()");
+        assert_to_tokens(
+            Call {
+                args: vec![expr(ExprBase::Lit(quote! { 0123 }))],
+            },
+            "(0123)",
+        );
+        assert_to_tokens(
+            Call {
+                args: vec![
+                    expr(ExprBase::Lit(quote! { "foo" })),
+                    expr(ExprBase::Lit(quote! { "bar" })),
+                ],
+            },
+            "(\"foo\", \"bar\")",
+        );
+    }
+
+    #[test]
+    fn cast_parse() {
+        let cast = parse_str::<Cast>("as Type").unwrap();
+        assert_token_stream(cast.ty, quote! { Type });
+
+        let cast = parse_str::<Cast>("as module::Type").unwrap();
+        assert_token_stream(cast.ty, quote! { module::Type });
+
+        let cast = parse_str::<Cast>("as ::module::Type").unwrap();
+        assert_token_stream(cast.ty, quote! { ::module::Type });
+
+        let cast = parse_str::<Cast>("as ::module::Type<T>").unwrap();
+        assert_token_stream(cast.ty, quote! { ::module::Type<T> });
+
+        let cast = parse_str::<Cast>("as ::module::Type::<T>").unwrap();
+        assert_token_stream(cast.ty, quote! { ::module::Type::<T> });
+
+        let cast = parse_str::<Cast>("as <Type as Trait>::Assoc").unwrap();
+        assert_token_stream(cast.ty, quote! { <Type as Trait>::Assoc });
+
+        let cast = parse_str::<Cast>("as &T").unwrap();
+        assert_token_stream(cast.ty, quote! { &T });
+
+        let cast = parse_str::<Cast>("as &'a T").unwrap();
+        assert_token_stream(cast.ty, quote! { &'a T });
+
+        let cast = parse_str::<Cast>("as dyn T").unwrap();
+        assert_token_stream(cast.ty, quote! { dyn T });
+
+        _ = parse_str::<Cast>("Type").unwrap_err();
+        _ = parse_str::<Cast>("<Type>").unwrap_err();
+        _ = parse_str::<Cast>("as <Type as Trait>").unwrap_err();
+    }
+
+    #[test]
+    fn cast_print() {
+        assert_to_tokens(
+            Cast {
+                ty: quote! { Type },
+            },
+            "as Type",
+        );
+        assert_to_tokens(
+            Cast {
+                ty: quote! { <Type as Trait>::Assoc },
+            },
+            "as <Type as Trait>::Assoc",
+        );
+    }
+
+    #[test]
+    fn cast_respect() {
+        assert_respect::<Cast>(quote! { as });
+        assert_respect::<Cast>(quote! { as :: });
+        assert_respect::<Cast>(quote! { as module:: });
+    }
+
+    #[test]
+    fn dotted_parse() {
+        let Ok(Dotted::Await) = parse_str(".await") else {
+            panic!();
+        };
+        let Ok(Dotted::Field(_)) = parse_str(".ident") else {
+            panic!();
+        };
+        let Ok(Dotted::MethodCall(_)) = parse_str(".call()") else {
+            panic!();
+        };
+
+        _ = parse_str::<Dotted>("await").unwrap_err();
+        _ = parse_str::<Dotted>(".await()").unwrap_err();
+        _ = parse_str::<Dotted>(".ident::<>").unwrap_err();
+        _ = parse_str::<Dotted>(".await::<>()").unwrap_err();
+    }
+
+    #[test]
+    fn dotted_print() {
+        assert_to_tokens(Dotted::Await, ".await");
+
+        assert_to_tokens(
+            Dotted::Field(Field::Named(format_ident!("ident"))),
+            ".ident",
+        );
+        assert_to_tokens(Dotted::Field(Field::Unnamed(0123)), ".123");
+
+        assert_to_tokens(
+            Dotted::MethodCall(MethodCall {
+                ident: format_ident!("ident"),
+                turbofish: None,
+                args: vec![],
+            }),
+            ".ident()",
+        );
+        assert_to_tokens(
+            Dotted::MethodCall(MethodCall {
+                ident: format_ident!("ident"),
+                turbofish: Some(TokenStream::new()),
+                args: vec![],
+            }),
+            ".ident::<>()",
+        );
+        assert_to_tokens(
+            Dotted::MethodCall(MethodCall {
+                ident: format_ident!("ident"),
+                turbofish: Some(quote! { Type }),
+                args: vec![],
+            }),
+            ".ident::<Type>()",
+        );
+    }
+
+    #[test]
+    fn dotted_respect() {
+        assert_respect::<Dotted>(quote! { . });
+    }
+
+    #[test]
     fn expr_parse() {
         let expr = parse_str::<Expr>("0123").unwrap();
         assert!(expr.attrs.is_empty());
@@ -969,35 +1285,35 @@ mod tests {
 
         let expr = parse_str::<Expr>("!0123").unwrap();
         assert_eq!(expr.prefixes.len(), 1);
-        assert!(matches!(expr.prefixes[0], ExprPrefix::Not));
+        assert!(matches!(expr.prefixes[0], Prefix::Not));
 
         let expr = parse_str::<Expr>("!!!0123").unwrap();
         assert_eq!(expr.prefixes.len(), 3);
-        assert!(matches!(expr.prefixes[0], ExprPrefix::Not));
-        assert!(matches!(expr.prefixes[1], ExprPrefix::Not));
-        assert!(matches!(expr.prefixes[2], ExprPrefix::Not));
+        assert!(matches!(expr.prefixes[0], Prefix::Not));
+        assert!(matches!(expr.prefixes[1], Prefix::Not));
+        assert!(matches!(expr.prefixes[2], Prefix::Not));
 
         let expr = parse_str::<Expr>("0123?").unwrap();
         assert_eq!(expr.suffixes.len(), 1);
-        assert!(matches!(expr.suffixes[0], ExprSuffix::Try));
+        assert!(matches!(expr.suffixes[0], Suffix::Try));
 
         let expr = parse_str::<Expr>("0123???").unwrap();
         assert_eq!(expr.suffixes.len(), 3);
-        assert!(matches!(expr.suffixes[0], ExprSuffix::Try));
-        assert!(matches!(expr.suffixes[1], ExprSuffix::Try));
-        assert!(matches!(expr.suffixes[2], ExprSuffix::Try));
+        assert!(matches!(expr.suffixes[0], Suffix::Try));
+        assert!(matches!(expr.suffixes[1], Suffix::Try));
+        assert!(matches!(expr.suffixes[2], Suffix::Try));
 
         let expr = parse_str::<Expr>("#[meta] #[meta] !!!0123???").unwrap();
         assert_token_stream(expr.attrs, quote! { #[meta] #[meta] });
         assert_eq!(expr.prefixes.len(), 3);
-        assert!(matches!(expr.prefixes[0], ExprPrefix::Not));
-        assert!(matches!(expr.prefixes[1], ExprPrefix::Not));
-        assert!(matches!(expr.prefixes[2], ExprPrefix::Not));
+        assert!(matches!(expr.prefixes[0], Prefix::Not));
+        assert!(matches!(expr.prefixes[1], Prefix::Not));
+        assert!(matches!(expr.prefixes[2], Prefix::Not));
         assert!(matches!(expr.base, ExprBase::Lit(_)));
         assert_eq!(expr.suffixes.len(), 3);
-        assert!(matches!(expr.suffixes[0], ExprSuffix::Try));
-        assert!(matches!(expr.suffixes[1], ExprSuffix::Try));
-        assert!(matches!(expr.suffixes[2], ExprSuffix::Try));
+        assert!(matches!(expr.suffixes[0], Suffix::Try));
+        assert!(matches!(expr.suffixes[1], Suffix::Try));
+        assert!(matches!(expr.suffixes[2], Suffix::Try));
     }
 
     #[test]
@@ -1005,12 +1321,12 @@ mod tests {
         assert_to_tokens(
             Expr {
                 attrs: quote! { #![meta] #[meta] },
-                prefixes: vec![ExprPrefix::Not, ExprPrefix::Neg],
+                prefixes: vec![Prefix::Not, Prefix::Neg],
                 base: ExprBase::Lit(quote! { 0123 }),
                 suffixes: vec![
-                    ExprSuffix::Try,
-                    ExprSuffix::Binary(ExprSuffixBinary {
-                        kind: ExprSuffixBinaryKind::Add,
+                    Suffix::Try,
+                    Suffix::Binary(Binary {
+                        op: BinaryOp::Add,
                         expr: Box::new(expr(ExprBase::Lit(quote! { "foo" }))),
                     }),
                 ],
@@ -1027,388 +1343,100 @@ mod tests {
     }
 
     #[test]
-    fn expr_prefix_parse() {
-        assert!(matches!(parse_str("*").unwrap(), ExprPrefix::Deref));
-        assert!(matches!(parse_str("-").unwrap(), ExprPrefix::Neg));
-        assert!(matches!(parse_str("!").unwrap(), ExprPrefix::Not));
-        assert!(matches!(
-            parse_str("&raw const").unwrap(),
-            ExprPrefix::RawConst,
-        ));
-        assert!(matches!(parse_str("&raw mut").unwrap(), ExprPrefix::RawMut));
-        assert!(matches!(parse_str("&").unwrap(), ExprPrefix::Ref));
-        assert!(matches!(parse_str("&mut").unwrap(), ExprPrefix::RefMut));
-
-        _ = parse_str::<ExprPrefix>("&raw").unwrap_err();
-    }
-
-    #[test]
-    fn expr_prefix_print() {
-        assert_to_tokens(ExprPrefix::Deref, "*");
-        assert_to_tokens(ExprPrefix::Neg, "-");
-        assert_to_tokens(ExprPrefix::Not, "!");
-        assert_to_tokens(ExprPrefix::RawConst, "&raw const");
-        assert_to_tokens(ExprPrefix::RawMut, "&raw mut");
-        assert_to_tokens(ExprPrefix::Ref, "&");
-        assert_to_tokens(ExprPrefix::RefMut, "&mut");
-    }
-
-    #[test]
-    fn expr_suffix_parse() {
-        assert!(matches!(parse_str("+ 0").unwrap(), ExprSuffix::Binary(_)));
-        assert!(matches!(parse_str("(0123)").unwrap(), ExprSuffix::Call(_)));
-        assert!(matches!(parse_str("as Type").unwrap(), ExprSuffix::Cast(_)));
-        assert!(matches!(parse_str(".ident").unwrap(), ExprSuffix::Dot(_)));
-        assert!(matches!(parse_str("[0123]").unwrap(), ExprSuffix::Index(_)));
-        assert!(matches!(parse_str("?").unwrap(), ExprSuffix::Try));
-    }
-
-    #[test]
-    fn expr_suffix_print() {
-        assert_to_tokens(ExprSuffix::Try, "?");
-    }
-
-    #[test]
-    fn expr_suffix_respect() {
-        assert_respect::<ExprSuffix>(quote! { + });
-        assert_respect::<ExprSuffix>(quote! { as });
-        assert_respect::<ExprSuffix>(quote! { . });
-    }
-
-    #[test]
-    fn expr_suffix_binary_parse() {
-        let binary = parse_str::<ExprSuffixBinary>("+ 0123").unwrap();
-        assert!(matches!(binary.kind, ExprSuffixBinaryKind::Add));
-        assert!(matches!(binary.expr.base, ExprBase::Lit(_)));
-
-        let binary = parse_str::<ExprSuffixBinary>("<<= \"foo\"").unwrap();
-        assert!(matches!(binary.kind, ExprSuffixBinaryKind::ShlAssign));
-        assert!(matches!(binary.expr.base, ExprBase::Lit(_)));
-
-        _ = parse_str::<ExprSuffixBinary>("<Type>").unwrap_err();
-    }
-
-    #[test]
-    fn expr_suffix_binary_print() {
-        assert_to_tokens(
-            ExprSuffixBinary {
-                kind: ExprSuffixBinaryKind::Add,
-                expr: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
-            },
-            "+ 0123",
-        );
-        assert_to_tokens(
-            ExprSuffixBinary {
-                kind: ExprSuffixBinaryKind::ShlAssign,
-                expr: Box::new(expr(ExprBase::Lit(quote! { "foo" }))),
-            },
-            "<<= \"foo\"",
-        );
-    }
-
-    #[test]
-    fn expr_suffix_binary_respect() {
-        assert_respect::<ExprSuffixBinary>(quote! { + });
-        assert_respect::<ExprSuffixBinary>(quote! { <<= });
-    }
-
-    #[test]
-    fn expr_suffix_binary_kind_parse() {
-        use ExprSuffixBinaryKind::{self as Kind, *};
-
-        assert!(matches!(parse_str::<Kind>("+").unwrap(), Add));
-        assert!(matches!(parse_str::<Kind>("-").unwrap(), Sub));
-        assert!(matches!(parse_str::<Kind>("*").unwrap(), Mul));
-        assert!(matches!(parse_str::<Kind>("/").unwrap(), Div));
-        assert!(matches!(parse_str::<Kind>("%").unwrap(), Rem));
-        assert!(matches!(parse_str::<Kind>("&&").unwrap(), And));
-        assert!(matches!(parse_str::<Kind>("||").unwrap(), Or));
-        assert!(matches!(parse_str::<Kind>("^").unwrap(), BitXor));
-        assert!(matches!(parse_str::<Kind>("&").unwrap(), BitAnd));
-        assert!(matches!(parse_str::<Kind>("|").unwrap(), BitOr));
-        assert!(matches!(parse_str::<Kind>("<<").unwrap(), Shl));
-        assert!(matches!(parse_str::<Kind>(">>").unwrap(), Shr));
-        assert!(matches!(parse_str::<Kind>("==").unwrap(), Eq));
-        assert!(matches!(parse_str::<Kind>("<").unwrap(), Lt));
-        assert!(matches!(parse_str::<Kind>("<=").unwrap(), Le));
-        assert!(matches!(parse_str::<Kind>("!=").unwrap(), Ne));
-        assert!(matches!(parse_str::<Kind>(">=").unwrap(), Ge));
-        assert!(matches!(parse_str::<Kind>(">").unwrap(), Gt));
-        assert!(matches!(parse_str::<Kind>("=").unwrap(), Assign));
-        assert!(matches!(parse_str::<Kind>("+=").unwrap(), AddAssign));
-        assert!(matches!(parse_str::<Kind>("-=").unwrap(), SubAssign));
-        assert!(matches!(parse_str::<Kind>("*=").unwrap(), MulAssign));
-        assert!(matches!(parse_str::<Kind>("/=").unwrap(), DivAssign));
-        assert!(matches!(parse_str::<Kind>("%=").unwrap(), RemAssign));
-        assert!(matches!(parse_str::<Kind>("^=").unwrap(), BitXorAssign));
-        assert!(matches!(parse_str::<Kind>("&=").unwrap(), BitAndAssign));
-        assert!(matches!(parse_str::<Kind>("|=").unwrap(), BitOrAssign));
-        assert!(matches!(parse_str::<Kind>("<<=").unwrap(), ShlAssign));
-        assert!(matches!(parse_str::<Kind>(">>=").unwrap(), ShrAssign));
-
-        _ = parse_str::<Kind>("+-").unwrap_err();
-        _ = parse_str::<Kind>("--").unwrap_err();
-        _ = parse_str::<Kind>("*-").unwrap_err();
-        _ = parse_str::<Kind>("/-").unwrap_err();
-        _ = parse_str::<Kind>("===").unwrap_err();
-        _ = parse_str::<Kind>("<<=<").unwrap_err();
-    }
-
-    #[test]
-    fn expr_suffix_binary_kind_print() {
-        assert_to_tokens(ExprSuffixBinaryKind::Add, "+");
-        assert_to_tokens(ExprSuffixBinaryKind::Sub, "-");
-        assert_to_tokens(ExprSuffixBinaryKind::Mul, "*");
-        assert_to_tokens(ExprSuffixBinaryKind::Div, "/");
-        assert_to_tokens(ExprSuffixBinaryKind::Rem, "%");
-        assert_to_tokens(ExprSuffixBinaryKind::And, "&&");
-        assert_to_tokens(ExprSuffixBinaryKind::Or, "||");
-        assert_to_tokens(ExprSuffixBinaryKind::BitXor, "^");
-        assert_to_tokens(ExprSuffixBinaryKind::BitAnd, "&");
-        assert_to_tokens(ExprSuffixBinaryKind::BitOr, "|");
-        assert_to_tokens(ExprSuffixBinaryKind::Shl, "<<");
-        assert_to_tokens(ExprSuffixBinaryKind::Shr, ">>");
-        assert_to_tokens(ExprSuffixBinaryKind::Eq, "==");
-        assert_to_tokens(ExprSuffixBinaryKind::Lt, "<");
-        assert_to_tokens(ExprSuffixBinaryKind::Le, "<=");
-        assert_to_tokens(ExprSuffixBinaryKind::Ne, "!=");
-        assert_to_tokens(ExprSuffixBinaryKind::Ge, ">=");
-        assert_to_tokens(ExprSuffixBinaryKind::Gt, ">");
-        assert_to_tokens(ExprSuffixBinaryKind::Assign, "=");
-        assert_to_tokens(ExprSuffixBinaryKind::AddAssign, "+=");
-        assert_to_tokens(ExprSuffixBinaryKind::SubAssign, "-=");
-        assert_to_tokens(ExprSuffixBinaryKind::MulAssign, "*=");
-        assert_to_tokens(ExprSuffixBinaryKind::DivAssign, "/=");
-        assert_to_tokens(ExprSuffixBinaryKind::RemAssign, "%=");
-        assert_to_tokens(ExprSuffixBinaryKind::BitXorAssign, "^=");
-        assert_to_tokens(ExprSuffixBinaryKind::BitAndAssign, "&=");
-        assert_to_tokens(ExprSuffixBinaryKind::BitOrAssign, "|=");
-        assert_to_tokens(ExprSuffixBinaryKind::ShlAssign, "<<=");
-        assert_to_tokens(ExprSuffixBinaryKind::ShrAssign, ">>=");
-    }
-
-    #[test]
-    fn expr_suffix_binary_kind_respect() {
-        assert_respect::<ExprSuffixBinaryKind>(quote! { ! });
-    }
-
-    #[test]
-    fn expr_suffix_call_parse() {
-        assert!(parse_str::<ExprSuffixCall>("()").unwrap().args.is_empty());
-
-        let call = parse_str::<ExprSuffixCall>("(0123)").unwrap();
-        assert_eq!(call.args.len(), 1);
-        assert!(matches!(call.args[0].base, ExprBase::Lit(_)));
-
-        let call = parse_str::<ExprSuffixCall>("(\"foo\", \"bar\",)").unwrap();
-        assert_eq!(call.args.len(), 2);
-        assert!(matches!(call.args[0].base, ExprBase::Lit(_)));
-        assert!(matches!(call.args[1].base, ExprBase::Lit(_)));
-    }
-
-    #[test]
-    fn expr_suffix_call_print() {
-        assert_to_tokens(ExprSuffixCall { args: vec![] }, "()");
-        assert_to_tokens(
-            ExprSuffixCall {
-                args: vec![expr(ExprBase::Lit(quote! { 0123 }))],
-            },
-            "(0123)",
-        );
-        assert_to_tokens(
-            ExprSuffixCall {
-                args: vec![
-                    expr(ExprBase::Lit(quote! { "foo" })),
-                    expr(ExprBase::Lit(quote! { "bar" })),
-                ],
-            },
-            "(\"foo\", \"bar\")",
-        );
-    }
-
-    #[test]
-    fn expr_suffix_cast_parse() {
-        let cast = parse_str::<ExprSuffixCast>("as Type").unwrap();
-        assert_token_stream(cast.ty, quote! { Type });
-
-        let cast = parse_str::<ExprSuffixCast>("as module::Type").unwrap();
-        assert_token_stream(cast.ty, quote! { module::Type });
-
-        let cast = parse_str::<ExprSuffixCast>("as ::module::Type").unwrap();
-        assert_token_stream(cast.ty, quote! { ::module::Type });
-
-        let cast = parse_str::<ExprSuffixCast>("as ::module::Type<T>").unwrap();
-        assert_token_stream(cast.ty, quote! { ::module::Type<T> });
-
-        let cast = parse_str::<ExprSuffixCast>("as ::module::Type::<T>").unwrap();
-        assert_token_stream(cast.ty, quote! { ::module::Type::<T> });
-
-        let cast = parse_str::<ExprSuffixCast>("as <Type as Trait>::Assoc").unwrap();
-        assert_token_stream(cast.ty, quote! { <Type as Trait>::Assoc });
-
-        let cast = parse_str::<ExprSuffixCast>("as &T").unwrap();
-        assert_token_stream(cast.ty, quote! { &T });
-
-        let cast = parse_str::<ExprSuffixCast>("as &'a T").unwrap();
-        assert_token_stream(cast.ty, quote! { &'a T });
-
-        let cast = parse_str::<ExprSuffixCast>("as dyn T").unwrap();
-        assert_token_stream(cast.ty, quote! { dyn T });
-
-        _ = parse_str::<ExprSuffixCast>("Type").unwrap_err();
-        _ = parse_str::<ExprSuffixCast>("<Type>").unwrap_err();
-        _ = parse_str::<ExprSuffixCast>("as <Type as Trait>").unwrap_err();
-    }
-
-    #[test]
-    fn expr_suffix_cast_print() {
-        assert_to_tokens(
-            ExprSuffixCast {
-                ty: quote! { Type },
-            },
-            "as Type",
-        );
-        assert_to_tokens(
-            ExprSuffixCast {
-                ty: quote! { <Type as Trait>::Assoc },
-            },
-            "as <Type as Trait>::Assoc",
-        );
-    }
-
-    #[test]
-    fn expr_suffix_cast_respect() {
-        assert_respect::<ExprSuffixCast>(quote! { as });
-        assert_respect::<ExprSuffixCast>(quote! { as :: });
-        assert_respect::<ExprSuffixCast>(quote! { as module:: });
-    }
-
-    #[test]
-    fn expr_suffix_dot_parse() {
-        let Ok(ExprSuffixDot::Await) = parse_str(".await") else {
-            panic!();
-        };
-        let Ok(ExprSuffixDot::Field(field)) = parse_str(".ident") else {
-            panic!();
-        };
-        let Ok(ExprSuffixDot::MethodCall(method_call)) = parse_str(".call()") else {
-            panic!();
-        };
-
-        _ = parse_str::<ExprSuffixDot>("await").unwrap_err();
-        _ = parse_str::<ExprSuffixDot>(".await()").unwrap_err();
-        _ = parse_str::<ExprSuffixDot>(".ident::<>").unwrap_err();
-        _ = parse_str::<ExprSuffixDot>(".await::<>()").unwrap_err();
-    }
-
-    #[test]
-    fn expr_suffix_dot_print() {
-        assert_to_tokens(ExprSuffixDot::Await, ".await");
-
-        assert_to_tokens(
-            ExprSuffixDot::Field(ExprSuffixDotField::Named(format_ident!("ident"))),
-            ".ident",
-        );
-        assert_to_tokens(
-            ExprSuffixDot::Field(ExprSuffixDotField::Unnamed(0123)),
-            ".123",
-        );
-
-        assert_to_tokens(
-            ExprSuffixDot::MethodCall(ExprSuffixDotMethodCall {
-                ident: format_ident!("ident"),
-                turbofish: None,
-                args: vec![],
-            }),
-            ".ident()",
-        );
-        assert_to_tokens(
-            ExprSuffixDot::MethodCall(ExprSuffixDotMethodCall {
-                ident: format_ident!("ident"),
-                turbofish: Some(TokenStream::new()),
-                args: vec![],
-            }),
-            ".ident::<>()",
-        );
-        assert_to_tokens(
-            ExprSuffixDot::MethodCall(ExprSuffixDotMethodCall {
-                ident: format_ident!("ident"),
-                turbofish: Some(quote! { Type }),
-                args: vec![],
-            }),
-            ".ident::<Type>()",
-        );
-    }
-
-    #[test]
-    fn expr_suffix_dot_respect() {
-        assert_respect::<ExprSuffixDot>(quote! { . });
-    }
-
-    #[test]
-    fn expr_suffix_dot_field_parse() {
-        let Ok(ExprSuffixDotField::Named(ident)) = parse_str("ident") else {
+    fn field_parse() {
+        let Ok(Field::Named(ident)) = parse_str("ident") else {
             panic!();
         };
         assert_eq!(ident, "ident");
 
-        let Ok(ExprSuffixDotField::Unnamed(index)) = parse_str("0123") else {
+        let Ok(Field::Unnamed(index)) = parse_str("0123") else {
             panic!();
         };
         assert_eq!(index, 123);
 
-        _ = parse_str::<ExprSuffixDotField>("+0").unwrap_err();
-        _ = parse_str::<ExprSuffixDotField>("0i32").unwrap_err();
-        _ = parse_str::<ExprSuffixDotField>("!").unwrap_err();
-        _ = parse_str::<ExprSuffixDotField>("()").unwrap_err();
+        _ = parse_str::<Field>("+0").unwrap_err();
+        _ = parse_str::<Field>("0i32").unwrap_err();
+        _ = parse_str::<Field>("!").unwrap_err();
+        _ = parse_str::<Field>("()").unwrap_err();
     }
 
     #[test]
-    fn expr_suffix_dot_field_print() {
-        assert_to_tokens(ExprSuffixDotField::Named(format_ident!("ident")), "ident");
-        assert_to_tokens(ExprSuffixDotField::Unnamed(0123), "123");
+    fn field_print() {
+        assert_to_tokens(Field::Named(format_ident!("ident")), "ident");
+        assert_to_tokens(Field::Unnamed(0123), "123");
     }
 
     #[test]
-    fn expr_suffix_dot_method_call_parse() {
-        let method_call = parse_str::<ExprSuffixDotMethodCall>("ident()").unwrap();
+    fn index_parse() {
+        assert!(matches!(
+            parse_str::<Index>("[0123]").unwrap().index.base,
+            ExprBase::Lit(_),
+        ));
+        assert!(matches!(
+            parse_str::<Index>("[\"0123\"]").unwrap().index.base,
+            ExprBase::Lit(_),
+        ));
+
+        _ = parse_str::<Index>("").unwrap_err();
+        _ = parse_str::<Index>("[0123 +]").unwrap_err();
+    }
+
+    #[test]
+    fn index_print() {
+        assert_to_tokens(
+            Index {
+                index: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
+            },
+            "[0123]",
+        );
+        assert_to_tokens(
+            Index {
+                index: Box::new(expr(ExprBase::Lit(quote! { "foo" }))),
+            },
+            "[\"foo\"]",
+        );
+    }
+
+    #[test]
+    fn method_call_parse() {
+        let method_call = parse_str::<MethodCall>("ident()").unwrap();
         assert_eq!(method_call.ident, "ident");
         assert!(method_call.turbofish.is_none());
         assert!(method_call.args.is_empty());
 
-        let method_call = parse_str::<ExprSuffixDotMethodCall>("ident::<>()").unwrap();
+        let method_call = parse_str::<MethodCall>("ident::<>()").unwrap();
         assert_eq!(method_call.ident, "ident");
         assert!(method_call.turbofish.unwrap().is_empty());
         assert!(method_call.args.is_empty());
 
-        let method_call = parse_str::<ExprSuffixDotMethodCall>("ident::<Type>()").unwrap();
+        let method_call = parse_str::<MethodCall>("ident::<Type>()").unwrap();
         assert_eq!(method_call.ident, "ident");
         assert_token_stream(method_call.turbofish.unwrap(), quote! { Type });
         assert!(method_call.args.is_empty());
 
-        let method_call = parse_str::<ExprSuffixDotMethodCall>("ident::<<Type>>()").unwrap();
+        let method_call = parse_str::<MethodCall>("ident::<<Type>>()").unwrap();
         assert_eq!(method_call.ident, "ident");
         assert_token_stream(method_call.turbofish.unwrap(), quote! { <Type> });
         assert!(method_call.args.is_empty());
 
-        _ = parse_str::<ExprSuffixDotMethodCall>("0").unwrap_err();
-        _ = parse_str::<ExprSuffixDotMethodCall>("!").unwrap_err();
-        _ = parse_str::<ExprSuffixDotMethodCall>("()").unwrap_err();
-        _ = parse_str::<ExprSuffixDotMethodCall>("ident").unwrap_err();
-        _ = parse_str::<ExprSuffixDotMethodCall>("ident:").unwrap_err();
-        _ = parse_str::<ExprSuffixDotMethodCall>("ident::").unwrap_err();
-        _ = parse_str::<ExprSuffixDotMethodCall>("ident::<").unwrap_err();
-        _ = parse_str::<ExprSuffixDotMethodCall>("ident::>").unwrap_err();
-        _ = parse_str::<ExprSuffixDotMethodCall>("ident::<>").unwrap_err();
-        _ = parse_str::<ExprSuffixDotMethodCall>("ident::<>(").unwrap_err();
-        _ = parse_str::<ExprSuffixDotMethodCall>("ident::<<>()").unwrap_err();
-        _ = parse_str::<ExprSuffixDotMethodCall>("ident::<>>()").unwrap_err();
+        _ = parse_str::<MethodCall>("0").unwrap_err();
+        _ = parse_str::<MethodCall>("!").unwrap_err();
+        _ = parse_str::<MethodCall>("()").unwrap_err();
+        _ = parse_str::<MethodCall>("ident").unwrap_err();
+        _ = parse_str::<MethodCall>("ident:").unwrap_err();
+        _ = parse_str::<MethodCall>("ident::").unwrap_err();
+        _ = parse_str::<MethodCall>("ident::<").unwrap_err();
+        _ = parse_str::<MethodCall>("ident::>").unwrap_err();
+        _ = parse_str::<MethodCall>("ident::<>").unwrap_err();
+        _ = parse_str::<MethodCall>("ident::<>(").unwrap_err();
+        _ = parse_str::<MethodCall>("ident::<<>()").unwrap_err();
+        _ = parse_str::<MethodCall>("ident::<>>()").unwrap_err();
     }
 
     #[test]
-    fn expr_suffix_dot_method_call_print() {
+    fn method_call_print() {
         assert_to_tokens(
-            ExprSuffixDotMethodCall {
+            MethodCall {
                 ident: format_ident!("ident"),
                 turbofish: None,
                 args: vec![],
@@ -1417,7 +1445,7 @@ mod tests {
         );
 
         assert_to_tokens(
-            ExprSuffixDotMethodCall {
+            MethodCall {
                 ident: format_ident!("ident"),
                 turbofish: Some(quote! { Type }),
                 args: vec![],
@@ -1427,41 +1455,35 @@ mod tests {
     }
 
     #[test]
-    fn expr_suffix_dot_method_call_respect() {
-        assert_respect::<ExprSuffixDotMethodCall>(quote! { method });
+    fn method_call_respect() {
+        assert_respect::<MethodCall>(quote! { method });
     }
 
     #[test]
-    fn expr_suffix_index_parse() {
-        assert!(matches!(
-            parse_str::<ExprSuffixIndex>("[0123]").unwrap().index.base,
-            ExprBase::Lit(_),
-        ));
-        assert!(matches!(
-            parse_str::<ExprSuffixIndex>("[\"0123\"]")
-                .unwrap()
-                .index
-                .base,
-            ExprBase::Lit(_),
-        ));
+    fn stmt_parse() {}
 
-        _ = parse_str::<ExprSuffixIndex>("").unwrap_err();
-        _ = parse_str::<ExprSuffixIndex>("[0123 +]").unwrap_err();
+    #[test]
+    fn stmt_print() {}
+
+    #[test]
+    fn suffix_parse() {
+        assert!(matches!(parse_str("+ 0").unwrap(), Suffix::Binary(_)));
+        assert!(matches!(parse_str("(0123)").unwrap(), Suffix::Call(_)));
+        assert!(matches!(parse_str("as Type").unwrap(), Suffix::Cast(_)));
+        assert!(matches!(parse_str(".ident").unwrap(), Suffix::Dot(_)));
+        assert!(matches!(parse_str("[0123]").unwrap(), Suffix::Index(_)));
+        assert!(matches!(parse_str("?").unwrap(), Suffix::Try));
     }
 
     #[test]
-    fn expr_suffix_index_print() {
-        assert_to_tokens(
-            ExprSuffixIndex {
-                index: Box::new(expr(ExprBase::Lit(quote! { 0123 }))),
-            },
-            "[0123]",
-        );
-        assert_to_tokens(
-            ExprSuffixIndex {
-                index: Box::new(expr(ExprBase::Lit(quote! { "foo" }))),
-            },
-            "[\"foo\"]",
-        );
+    fn suffix_print() {
+        assert_to_tokens(Suffix::Try, "?");
+    }
+
+    #[test]
+    fn suffix_respect() {
+        assert_respect::<Suffix>(quote! { + });
+        assert_respect::<Suffix>(quote! { as });
+        assert_respect::<Suffix>(quote! { . });
     }
 }
