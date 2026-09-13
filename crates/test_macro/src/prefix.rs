@@ -6,7 +6,6 @@ use syn::{
 };
 
 #[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) enum Prefix {
     /// `*`
     Deref,
@@ -71,32 +70,30 @@ impl ToTokens for Prefix {
 
 #[cfg(test)]
 mod tests {
-    use syn::parse_str;
-
-    use crate::{Prefix, test::assert_to_tokens};
+    use crate::Prefix;
 
     #[test]
     fn parse() {
         use crate::assert_parse as a;
-        a!(_, Ok(Prefix::Deref), *);
-        a!(_, Ok(Prefix::Neg), -);
-        a!(_, Ok(Prefix::Not), !);
-        a!(_, Ok(Prefix::RawConst), &raw const);
-        a!(_, Ok(Prefix::RawMut), &raw mut);
-        a!(_, Ok(Prefix::Ref), &);
-        a!(_, Ok(Prefix::RefMut), &mut);
-        a!(Prefix, Err(_), &raw);
+        a! { _, Ok(Prefix::Deref), * };
+        a! { _, Ok(Prefix::Neg), - };
+        a! { _, Ok(Prefix::Not), ! };
+        a! { _, Ok(Prefix::RawConst), &raw const };
+        a! { _, Ok(Prefix::RawMut), &raw mut };
+        a! { _, Ok(Prefix::Ref), & };
+        a! { _, Ok(Prefix::RefMut), &mut };
+        a! { Prefix, Err(_), &raw };
     }
 
     #[test]
     fn to_tokens() {
         use crate::assert_to_tokens as a;
-        a!(Prefix::Deref, *);
-        a!(Prefix::Neg, -);
-        a!(Prefix::Not, !);
-        a!(Prefix::RawConst, &raw const);
-        a!(Prefix::RawMut, &raw mut);
-        a!(Prefix::Ref, &);
-        a!(Prefix::RefMut, &mut);
+        a! { Prefix::Deref, * };
+        a! { Prefix::Neg, - };
+        a! { Prefix::Not, ! };
+        a! { Prefix::RawConst, &raw const };
+        a! { Prefix::RawMut, &raw mut };
+        a! { Prefix::Ref, & };
+        a! { Prefix::RefMut, &mut };
     }
 }

@@ -1,3 +1,15 @@
+pub(crate) mod cast;
+pub(crate) use cast::Cast;
+
+pub(crate) mod dotted;
+pub(crate) use dotted::Dotted;
+
+pub(crate) mod field;
+pub(crate) use field::Field;
+
+pub(crate) mod method;
+pub(crate) use method::Method;
+
 pub(crate) mod prefix;
 pub(crate) use prefix::Prefix;
 
@@ -385,66 +397,6 @@ impl ToTokens for Call {
 }
 
 #[derive(Debug)]
-pub(crate) struct Cast {
-    pub(crate) ty: TokenStream,
-}
-
-impl Parse for Cast {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let fork = input.fork();
-        _ = fork.parse::<Token![as]>()?;
-        let ty = fork.parse::<syn::Type>()?;
-        input.advance_to(&fork);
-        Ok(Cast {
-            ty: ty.to_token_stream(),
-        })
-    }
-}
-
-impl ToTokens for Cast {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let Cast { ty } = self;
-        quote! { as #ty }.to_tokens(tokens);
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum Dotted {
-    Await,
-    Field(Field),
-    MethodCall(MethodCall),
-}
-
-impl Parse for Dotted {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let fork = input.fork();
-        _ = fork.parse::<Token![.]>()?;
-        if let Ok(method_call) = fork.parse() {
-            input.advance_to(&fork);
-            Ok(Dotted::MethodCall(method_call))
-        } else if let Ok(field) = fork.parse() {
-            input.advance_to(&fork);
-            Ok(Dotted::Field(field))
-        } else {
-            fork.parse::<Token![await]>()?;
-            input.advance_to(&fork);
-            Ok(Dotted::Await)
-        }
-    }
-}
-
-impl ToTokens for Dotted {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        match self {
-            Dotted::Await => quote! { .await },
-            Dotted::Field(field) => quote! { . #field },
-            Dotted::MethodCall(method_call) => quote! { . #method_call },
-        }
-        .to_tokens(tokens);
-    }
-}
-
-#[derive(Debug)]
 pub(crate) struct Expr {
     pub(crate) attrs: TokenStream,
     pub(crate) prefixes: Vec<Prefix>,
@@ -571,30 +523,6 @@ impl ToTokens for ExprBase {
 }
 
 #[derive(Debug)]
-pub(crate) enum Field {
-    Named(Ident),
-    Unnamed(u32),
-}
-
-impl Parse for Field {
-    fn parse(input: ParseStream) -> Result<Self> {
-        match input.parse::<syn::Member>()? {
-            syn::Member::Named(ident) => Ok(Field::Named(ident)),
-            syn::Member::Unnamed(index) => Ok(Field::Unnamed(index.index)),
-        }
-    }
-}
-
-impl ToTokens for Field {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        match self {
-            Field::Named(ident) => ident.to_tokens(tokens),
-            Field::Unnamed(index) => Literal::u32_unsuffixed(*index).to_tokens(tokens),
-        };
-    }
-}
-
-#[derive(Debug)]
 pub(crate) struct Index {
     pub(crate) index: Box<Expr>,
 }
@@ -614,72 +542,6 @@ impl ToTokens for Index {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Index { index } = self;
         quote! { [#index] }.to_tokens(tokens);
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct MethodCall {
-    pub(crate) ident: Ident,
-    pub(crate) turbofish: Option<TokenStream>,
-    pub(crate) args: Vec<Expr>,
-}
-
-impl Parse for MethodCall {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let fork = input.fork();
-
-        let ident = fork.parse::<Ident>()?;
-
-        let turbofish = if fork.parse::<Token![::]>().is_ok() {
-            fork.parse::<Token![<]>()?;
-
-            let mut turbofish = TokenStream::new();
-            let mut scope = 0;
-            loop {
-                let token_tree = fork.parse::<TokenTree>()?;
-                match &token_tree {
-                    TokenTree::Punct(punct) if punct.as_char() == '<' => scope += 1,
-                    TokenTree::Punct(punct) if punct.as_char() == '>' && scope != 0 => scope -= 1,
-                    TokenTree::Punct(punct) if punct.as_char() == '>' => break,
-                    _ => {}
-                }
-                turbofish.extend(std::iter::once(token_tree));
-            }
-
-            Some(turbofish)
-        } else {
-            None
-        };
-
-        let args;
-        parenthesized!(args in fork);
-        let args = Punctuated::<Expr, Token![,]>::parse_terminated(&args)?
-            .into_iter()
-            .collect();
-
-        input.advance_to(&fork);
-        Ok(MethodCall {
-            ident,
-            turbofish,
-            args,
-        })
-    }
-}
-
-impl ToTokens for MethodCall {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let MethodCall {
-            ident,
-            turbofish,
-            args,
-        } = self;
-        let turbofish = turbofish
-            .as_ref()
-            .map(|turbofish| quote! { ::<#turbofish> });
-        quote! {
-            #ident #turbofish ( #(#args),* )
-        }
-        .to_tokens(tokens);
     }
 }
 
@@ -760,7 +622,7 @@ mod test {
     macro_rules! assert_to_tokens {
         ($value:expr, $($tokens:tt)*) => {
             let value = $value;
-            $crate::test::assert_token_stream(
+            $crate::test::assert_tokens(
                 ::quote::quote! { #value },
                 ::quote::quote! { $($tokens)* },
             )
@@ -768,7 +630,7 @@ mod test {
     }
 
     #[track_caller]
-    pub(crate) fn assert_token_stream(lhs: TokenStream, rhs: TokenStream) {
+    pub(crate) fn assert_tokens(lhs: TokenStream, rhs: TokenStream) {
         let mut lhs = lhs.into_iter();
         let mut rhs = rhs.into_iter();
         while let (lhs, rhs) = (lhs.next(), rhs.next())
@@ -777,7 +639,7 @@ mod test {
             match (&lhs, &rhs) {
                 (Some(TokenTree::Group(lhs)), Some(TokenTree::Group(rhs))) => {
                     assert_eq!(lhs.delimiter(), rhs.delimiter());
-                    assert_token_stream(lhs.stream(), rhs.stream());
+                    assert_tokens(lhs.stream(), rhs.stream());
                 }
                 (Some(TokenTree::Ident(lhs)), Some(TokenTree::Ident(rhs))) => {
                     assert_eq!(lhs.to_string(), rhs.to_string());
@@ -795,7 +657,7 @@ mod test {
 
     #[track_caller]
     pub(crate) fn assert_to_tokens<T: ToTokens>(lhs: T, rhs: &str) {
-        assert_token_stream(quote! { #lhs }, parse_str(rhs).unwrap());
+        assert_tokens(quote! { #lhs }, parse_str(rhs).unwrap());
     }
 
     /// Asserts that the tokens in [`TokenStream`], which must be a partially valid value of `T` as tokens, are not
@@ -832,8 +694,8 @@ mod tests {
 
     use crate::{
         Array, Binary, BinaryOp, BlockKind, Call, Cast, Closure, Dotted, Expr, ExprBase, Field,
-        Index, MethodCall, Prefix, Suffix,
-        test::{assert_respect, assert_to_tokens, assert_token_stream},
+        Index, Method, Prefix, Suffix,
+        test::{assert_respect, assert_to_tokens, assert_tokens},
     };
 
     fn expr(base: ExprBase) -> Expr {
@@ -1056,7 +918,7 @@ mod tests {
         assert_eq!(closure.has_move, true);
 
         let closure = parse_str::<Closure>("|ident: Type| 0123").unwrap();
-        assert_token_stream(closure.pats, quote! { ident: Type });
+        assert_tokens(closure.pats, quote! { ident: Type });
 
         _ = parse_str::<Closure>("move async || 0123").unwrap_err();
     }
@@ -1145,122 +1007,6 @@ mod tests {
     }
 
     #[test]
-    fn cast_parse() {
-        let cast = parse_str::<Cast>("as Type").unwrap();
-        assert_token_stream(cast.ty, quote! { Type });
-
-        let cast = parse_str::<Cast>("as module::Type").unwrap();
-        assert_token_stream(cast.ty, quote! { module::Type });
-
-        let cast = parse_str::<Cast>("as ::module::Type").unwrap();
-        assert_token_stream(cast.ty, quote! { ::module::Type });
-
-        let cast = parse_str::<Cast>("as ::module::Type<T>").unwrap();
-        assert_token_stream(cast.ty, quote! { ::module::Type<T> });
-
-        let cast = parse_str::<Cast>("as ::module::Type::<T>").unwrap();
-        assert_token_stream(cast.ty, quote! { ::module::Type::<T> });
-
-        let cast = parse_str::<Cast>("as <Type as Trait>::Assoc").unwrap();
-        assert_token_stream(cast.ty, quote! { <Type as Trait>::Assoc });
-
-        let cast = parse_str::<Cast>("as &T").unwrap();
-        assert_token_stream(cast.ty, quote! { &T });
-
-        let cast = parse_str::<Cast>("as &'a T").unwrap();
-        assert_token_stream(cast.ty, quote! { &'a T });
-
-        let cast = parse_str::<Cast>("as dyn T").unwrap();
-        assert_token_stream(cast.ty, quote! { dyn T });
-
-        _ = parse_str::<Cast>("Type").unwrap_err();
-        _ = parse_str::<Cast>("<Type>").unwrap_err();
-        _ = parse_str::<Cast>("as <Type as Trait>").unwrap_err();
-    }
-
-    #[test]
-    fn cast_print() {
-        assert_to_tokens(
-            Cast {
-                ty: quote! { Type },
-            },
-            "as Type",
-        );
-        assert_to_tokens(
-            Cast {
-                ty: quote! { <Type as Trait>::Assoc },
-            },
-            "as <Type as Trait>::Assoc",
-        );
-    }
-
-    #[test]
-    fn cast_respect() {
-        assert_respect::<Cast>(quote! { as });
-        assert_respect::<Cast>(quote! { as :: });
-        assert_respect::<Cast>(quote! { as module:: });
-    }
-
-    #[test]
-    fn dotted_parse() {
-        let Ok(Dotted::Await) = parse_str(".await") else {
-            panic!();
-        };
-        let Ok(Dotted::Field(_)) = parse_str(".ident") else {
-            panic!();
-        };
-        let Ok(Dotted::MethodCall(_)) = parse_str(".call()") else {
-            panic!();
-        };
-
-        _ = parse_str::<Dotted>("await").unwrap_err();
-        _ = parse_str::<Dotted>(".await()").unwrap_err();
-        _ = parse_str::<Dotted>(".ident::<>").unwrap_err();
-        _ = parse_str::<Dotted>(".await::<>()").unwrap_err();
-    }
-
-    #[test]
-    fn dotted_print() {
-        assert_to_tokens(Dotted::Await, ".await");
-
-        assert_to_tokens(
-            Dotted::Field(Field::Named(format_ident!("ident"))),
-            ".ident",
-        );
-        assert_to_tokens(Dotted::Field(Field::Unnamed(0123)), ".123");
-
-        assert_to_tokens(
-            Dotted::MethodCall(MethodCall {
-                ident: format_ident!("ident"),
-                turbofish: None,
-                args: vec![],
-            }),
-            ".ident()",
-        );
-        assert_to_tokens(
-            Dotted::MethodCall(MethodCall {
-                ident: format_ident!("ident"),
-                turbofish: Some(TokenStream::new()),
-                args: vec![],
-            }),
-            ".ident::<>()",
-        );
-        assert_to_tokens(
-            Dotted::MethodCall(MethodCall {
-                ident: format_ident!("ident"),
-                turbofish: Some(quote! { Type }),
-                args: vec![],
-            }),
-            ".ident::<Type>()",
-        );
-    }
-
-    #[test]
-    fn dotted_respect() {
-        assert_respect::<Dotted>(quote! { . });
-    }
-
-    #[test]
     fn expr_parse() {
         let expr = parse_str::<Expr>("0123").unwrap();
         assert!(expr.attrs.is_empty());
@@ -1269,19 +1015,19 @@ mod tests {
         assert!(expr.suffixes.is_empty());
 
         let expr = parse_str::<Expr>("#[meta] 0123").unwrap();
-        assert_token_stream(expr.attrs, quote! { #[meta] });
+        assert_tokens(expr.attrs, quote! { #[meta] });
         assert!(expr.prefixes.is_empty());
         assert!(matches!(expr.base, ExprBase::Lit(_)));
         assert!(expr.suffixes.is_empty());
 
         let expr = parse_str::<Expr>("#[meta(foo = [0123])] 0123").unwrap();
-        assert_token_stream(expr.attrs, quote! { #[meta(foo = [0123])] });
+        assert_tokens(expr.attrs, quote! { #[meta(foo = [0123])] });
 
         let expr = parse_str::<Expr>("#[meta] #[meta_foo] 0123").unwrap();
-        assert_token_stream(expr.attrs, quote! { #[meta] #[meta_foo] });
+        assert_tokens(expr.attrs, quote! { #[meta] #[meta_foo] });
 
         let expr = parse_str::<Expr>("#![meta] 0123").unwrap();
-        assert_token_stream(expr.attrs, quote! { #![meta] });
+        assert_tokens(expr.attrs, quote! { #![meta] });
 
         let expr = parse_str::<Expr>("!0123").unwrap();
         assert_eq!(expr.prefixes.len(), 1);
@@ -1304,7 +1050,7 @@ mod tests {
         assert!(matches!(expr.suffixes[2], Suffix::Try));
 
         let expr = parse_str::<Expr>("#[meta] #[meta] !!!0123???").unwrap();
-        assert_token_stream(expr.attrs, quote! { #[meta] #[meta] });
+        assert_tokens(expr.attrs, quote! { #[meta] #[meta] });
         assert_eq!(expr.prefixes.len(), 3);
         assert!(matches!(expr.prefixes[0], Prefix::Not));
         assert!(matches!(expr.prefixes[1], Prefix::Not));
@@ -1343,30 +1089,6 @@ mod tests {
     }
 
     #[test]
-    fn field_parse() {
-        let Ok(Field::Named(ident)) = parse_str("ident") else {
-            panic!();
-        };
-        assert_eq!(ident, "ident");
-
-        let Ok(Field::Unnamed(index)) = parse_str("0123") else {
-            panic!();
-        };
-        assert_eq!(index, 123);
-
-        _ = parse_str::<Field>("+0").unwrap_err();
-        _ = parse_str::<Field>("0i32").unwrap_err();
-        _ = parse_str::<Field>("!").unwrap_err();
-        _ = parse_str::<Field>("()").unwrap_err();
-    }
-
-    #[test]
-    fn field_print() {
-        assert_to_tokens(Field::Named(format_ident!("ident")), "ident");
-        assert_to_tokens(Field::Unnamed(0123), "123");
-    }
-
-    #[test]
     fn index_parse() {
         assert!(matches!(
             parse_str::<Index>("[0123]").unwrap().index.base,
@@ -1395,68 +1117,6 @@ mod tests {
             },
             "[\"foo\"]",
         );
-    }
-
-    #[test]
-    fn method_call_parse() {
-        let method_call = parse_str::<MethodCall>("ident()").unwrap();
-        assert_eq!(method_call.ident, "ident");
-        assert!(method_call.turbofish.is_none());
-        assert!(method_call.args.is_empty());
-
-        let method_call = parse_str::<MethodCall>("ident::<>()").unwrap();
-        assert_eq!(method_call.ident, "ident");
-        assert!(method_call.turbofish.unwrap().is_empty());
-        assert!(method_call.args.is_empty());
-
-        let method_call = parse_str::<MethodCall>("ident::<Type>()").unwrap();
-        assert_eq!(method_call.ident, "ident");
-        assert_token_stream(method_call.turbofish.unwrap(), quote! { Type });
-        assert!(method_call.args.is_empty());
-
-        let method_call = parse_str::<MethodCall>("ident::<<Type>>()").unwrap();
-        assert_eq!(method_call.ident, "ident");
-        assert_token_stream(method_call.turbofish.unwrap(), quote! { <Type> });
-        assert!(method_call.args.is_empty());
-
-        _ = parse_str::<MethodCall>("0").unwrap_err();
-        _ = parse_str::<MethodCall>("!").unwrap_err();
-        _ = parse_str::<MethodCall>("()").unwrap_err();
-        _ = parse_str::<MethodCall>("ident").unwrap_err();
-        _ = parse_str::<MethodCall>("ident:").unwrap_err();
-        _ = parse_str::<MethodCall>("ident::").unwrap_err();
-        _ = parse_str::<MethodCall>("ident::<").unwrap_err();
-        _ = parse_str::<MethodCall>("ident::>").unwrap_err();
-        _ = parse_str::<MethodCall>("ident::<>").unwrap_err();
-        _ = parse_str::<MethodCall>("ident::<>(").unwrap_err();
-        _ = parse_str::<MethodCall>("ident::<<>()").unwrap_err();
-        _ = parse_str::<MethodCall>("ident::<>>()").unwrap_err();
-    }
-
-    #[test]
-    fn method_call_print() {
-        assert_to_tokens(
-            MethodCall {
-                ident: format_ident!("ident"),
-                turbofish: None,
-                args: vec![],
-            },
-            "ident()",
-        );
-
-        assert_to_tokens(
-            MethodCall {
-                ident: format_ident!("ident"),
-                turbofish: Some(quote! { Type }),
-                args: vec![],
-            },
-            "ident::<Type>()",
-        );
-    }
-
-    #[test]
-    fn method_call_respect() {
-        assert_respect::<MethodCall>(quote! { method });
     }
 
     #[test]
