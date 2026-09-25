@@ -34,7 +34,7 @@ impl Parse for Method {
                     TokenTree::Punct(punct) if punct.as_char() == '>' => break,
                     _ => {}
                 }
-                turbofish.extend(std::iter::once(token_tree));
+                turbofish.extend([token_tree]);
             }
 
             Some(turbofish)

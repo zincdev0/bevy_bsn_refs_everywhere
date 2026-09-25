@@ -59,17 +59,17 @@ mod tests {
     }
 
     #[test]
-    fn to_tokens() {
-        use crate::assert_to_tokens as a;
-        a! { Cast { ty: quote! { Type } }, as Type };
-        a! { Cast { ty: quote! { <Type as Trait>::Assoc } }, as <Type as Trait>::Assoc };
-    }
-
-    #[test]
-    fn to_tokens_is_polite() {
+    fn parse_is_polite() {
         use crate::test::assert_respect;
         assert_respect::<Cast>(quote! { as });
         assert_respect::<Cast>(quote! { as :: });
         assert_respect::<Cast>(quote! { as module:: });
+    }
+
+    #[test]
+    fn to_tokens() {
+        use crate::assert_to_tokens as a;
+        a! { Cast { ty: quote! { Type } }, as Type };
+        a! { Cast { ty: quote! { <Type as Trait>::Assoc } }, as <Type as Trait>::Assoc };
     }
 }
